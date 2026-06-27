@@ -1,0 +1,35 @@
+# Build output
+build/
+
+# Gradle
+.gradle/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Agents
+.claude
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+*.lcov
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS files
+Thumbs.db
