@@ -62,7 +62,7 @@ tasks.test {
         fileTree("scripts") { include("**/*") },
         fileTree(".") {
             include("**/action.yml", "**/action.yaml", "**/Dockerfile")
-            exclude(".git/**", "build/**")
+            exclude(".git/**", ".gradle/**", "**/build/**")
         },
     ).withPathSensitivity(PathSensitivity.RELATIVE)
     testLogging {

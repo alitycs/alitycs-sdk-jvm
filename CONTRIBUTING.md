@@ -19,6 +19,7 @@ Use JDK 11+, the committed wrapper, CPython 3.11 through 3.14, and Ruby 3.3 or n
 ./gradlew koverVerify
 ./gradlew build
 ./gradlew publishToMavenLocal
+./scripts/verify-workflow-pins.rb
 ./scripts/validate-coderabbit.sh
 ```
 

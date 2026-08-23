@@ -255,6 +255,7 @@ class CodeRabbitGatePolicyTest {
         assertTrue(validator.contains("requires CPython 3.11 through 3.14"))
         assertTrue(contributing.contains("CPython 3.11 through 3.14"))
         assertFalse(contributing.contains("Python 3.11 or newer"))
+        assertTrue(contributing.contains("./scripts/verify-workflow-pins.rb"))
         assertTrue(build.contains("systemProperty(\"alitycs.repositoryRoot\", \".\")"))
         assertTrue(build.contains("withPathSensitivity(PathSensitivity.RELATIVE)"))
         assertTrue(build.contains("include(\"**/action.yml\", \"**/action.yaml\", \"**/Dockerfile\")"))
@@ -324,9 +325,14 @@ class CodeRabbitGatePolicyTest {
             }
         val docs = read("docs/coderabbit.md")
         val policy = read(".coderabbit.yaml")
+        val runnerDeclarations =
+            Regex("(?m)^\\s*runs-on\\s*:.*${'$'}").findAll(workflowCorpus).map { it.value.trim() }.toList()
 
         assertFalse(workflowCorpus.contains("ubuntu-latest"))
-        assertEquals(8, Regex("runs-on: ubuntu-24\\.04").findAll(workflowCorpus).count())
+        assertTrue(runnerDeclarations.isNotEmpty())
+        runnerDeclarations.forEach { declaration ->
+            assertEquals("runs-on: ubuntu-24.04", declaration)
+        }
         assertTrue(docs.contains("do not use a moving `*-latest` label"))
         assertTrue(policy.contains("runner labels pinned to explicit OS versions"))
     }
