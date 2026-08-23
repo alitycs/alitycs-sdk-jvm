@@ -147,6 +147,48 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
+    fun `gate accepts only absent or public installation visibility`() {
+        val workflow = read(".github/workflows/coderabbit-gate.yml")
+        val installationInspection =
+            workflow
+                .substringAfter("              const inspectInstallation = async () => {")
+                .substringBefore("              const listOwnedGateChecks = async () =>")
+
+        assertTrue(
+            installationInspection.contains(
+                "(candidate.visibility !== undefined && candidate.visibility !== \"public\")",
+            ),
+        )
+        assertFalse(
+            installationInspection.contains(
+                "candidate.visibility !== \"public\" ||",
+            ),
+        )
+        assertTrue(installationInspection.contains("candidate.private !== false"))
+        assertTrue(installationInspection.contains("candidate.archived !== false"))
+        assertTrue(installationInspection.contains("candidate.disabled === true"))
+        assertTrue(installationInspection.contains("candidate.fork !== false"))
+        assertTrue(installationInspection.contains("candidate.default_branch !== \"main\""))
+
+        data class VisibilityCase(
+            val present: Boolean,
+            val value: String?,
+            val allowed: Boolean,
+        )
+
+        listOf(
+            VisibilityCase(present = false, value = null, allowed = true),
+            VisibilityCase(present = true, value = "public", allowed = true),
+            VisibilityCase(present = true, value = "private", allowed = false),
+            VisibilityCase(present = true, value = "internal", allowed = false),
+            VisibilityCase(present = true, value = null, allowed = false),
+        ).forEach { fixture ->
+            val actual = !fixture.present || fixture.value == "public"
+            assertEquals(fixture.allowed, actual)
+        }
+    }
+
+    @Test
     fun `release builds are unprivileged and tags must target main history`() {
         val workflow = read(".github/workflows/release.yml")
         val readme = read("README.md")
