@@ -34,7 +34,7 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("environment: coderabbit-gate"))
         assertTrue(workflow.contains("const gateName = \"Alitycs CodeRabbit Gate\""))
         assertTrue(workflow.contains("head_sha: headSha"))
-        assertTrue(workflow.contains("alitycs-coderabbit-gate/v8:"))
+        assertTrue(workflow.contains("alitycs-coderabbit-gate/v9:"))
         assertTrue(workflow.contains("review.commit_id === headSha"))
         assertTrue(workflow.contains("context.eventName === \"push\""))
         assertTrue(workflow.contains("github.rest.pulls.get"))
@@ -55,7 +55,7 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("github.rest.checks.listForRef"))
         assertTrue(workflow.contains("filter: \"all\""))
         assertTrue(workflow.contains("app_id: gateAppId"))
-        assertTrue(workflow.contains("Superseded duplicate gate check"))
+        assertTrue(workflow.contains("Superseded gate check"))
         assertTrue(workflow.contains("current.data.external_id === externalId"))
         assertTrue(workflow.contains("currentPullRequest.head.sha !== headSha"))
         assertTrue(workflow.contains("currentMainSha !== baseSha"))
@@ -67,6 +67,41 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("permission-checks: write"))
         assertTrue(workflow.contains("permission-contents: read"))
         assertTrue(workflow.contains("permission-pull-requests: read"))
+        val inspectionTokenStep =
+            workflow
+                .substringAfter("      - name: Mint the selected-repository inspection token")
+                .substringBefore("      - name: Mint the dedicated gate token")
+        assertTrue(inspectionTokenStep.contains("id: installation-token"))
+        assertTrue(inspectionTokenStep.contains("owner: \${{ github.repository_owner }}"))
+        assertTrue(inspectionTokenStep.contains("permission-contents: read"))
+        assertFalse(inspectionTokenStep.contains("permission-checks:"))
+        assertFalse(inspectionTokenStep.contains("permission-pull-requests:"))
+        assertTrue(workflow.contains("const installationGithub = getOctokit(installationToken);"))
+        assertTrue(workflow.contains("await installationGithub.paginate("))
+        assertFalse(workflow.contains("headers: { authorization:"))
+        assertTrue(workflow.contains("\"GET /installation/repositories\""))
+        assertEquals(3, Regex("await inspectInstallation\\(\\)").findAll(workflow).count())
+        assertTrue(workflow.contains("!initialInstallation.includesCurrent"))
+        assertTrue(workflow.contains("!currentInstallation.includesCurrent"))
+        assertTrue(workflow.contains("!finalInstallation.includesCurrent"))
+        assertTrue(
+            workflow.contains(
+                "currentInstallation.fingerprint !== initialInstallation.fingerprint",
+            ),
+        )
+        assertTrue(
+            workflow.contains(
+                "finalInstallation.fingerprint !== initialInstallation.fingerprint",
+            ),
+        )
+        val supersedePrevious =
+            workflow.indexOf("await Promise.all(previousChecks.map(supersede));")
+        val createCanonical =
+            workflow.indexOf("const created = await github.rest.checks.create({")
+        assertTrue(supersedePrevious >= 0)
+        assertTrue(createCanonical > supersedePrevious)
+        assertTrue(workflow.contains("stableChecks.slice(1).map(supersede)"))
+        assertFalse(workflow.contains("previousChecks.map((checkRun)"))
         assertTrue(workflow.contains("deploymentPolicy?.custom_branch_policies === true"))
         assertTrue(workflow.contains("branchPolicies[0].name === \"main\""))
         assertTrue(workflow.contains("reviewActor !== \"coderabbitai[bot]\""))
@@ -196,6 +231,38 @@ class CodeRabbitGatePolicyTest {
         assertFalse(audit.contains(".permissions.checks =="))
         assertTrue(audit.contains("(.events // []) == []"))
         assertTrue(audit.contains("(.events | sort) == (["))
+        assertTrue(
+            audit.contains(
+                "readonly gate_canary_sha_variable=\"ALITYCS_CODERABBIT_GATE_CANARY_SHA\"",
+            ),
+        )
+        assertTrue(
+            audit.contains(
+                "repos/\$repository/actions/variables/\$gate_canary_sha_variable",
+            ),
+        )
+        assertTrue(audit.contains("repos/\$repository/commits/\$canary_sha/check-runs"))
+        assertTrue(audit.contains("--arg external_id_prefix \"alitycs-coderabbit-gate/v9:\""))
+        assertTrue(audit.contains("--arg app_updated_at \"\$gate_app_updated_at\""))
+        assertTrue(audit.contains("-H \"Time-Zone: UTC\""))
+        assertTrue(
+            audit.contains(
+                "--arg installation_updated_at \"\$installation_updated_at\"",
+            ),
+        )
+        assertTrue(
+            audit.contains(
+                "(.completed_at | epoch) > (\$installation_updated_at | epoch)",
+            ),
+        )
+        assertTrue(audit.contains("(.completed_at | epoch) > (\$app_updated_at | epoch)"))
+        assertTrue(audit.contains("--arg secret_updated_at \"\$gate_secret_updated_at\""))
+        assertTrue(
+            audit.contains(
+                "(.completed_at | epoch) > (\$secret_updated_at | epoch)",
+            ),
+        )
+        assertTrue(audit.contains("the recorded Gate App canary is missing, stale"))
     }
 
     private fun runPinVerifier(input: String? = null): VerifierResult {
