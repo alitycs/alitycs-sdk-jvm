@@ -240,6 +240,59 @@ class CodeRabbitGatePolicyTest {
         assertTrue(invalid.stderr.contains("\"docker://alpine:latest\""))
         assertTrue(invalid.stderr.contains("\"actions/cache@v4\""))
 
+        val flowRedefinition =
+            runPinVerifier(
+                """
+                { jobs: { invalid: { steps: [{ uses: &pin actions/checkout@v4 }, { uses: *pin }] } }, later: &pin actions/checkout@${"e".repeat(40)} }
+                """.trimIndent(),
+            )
+        assertEquals(1, flowRedefinition.exitCode)
+        assertEquals(
+            2,
+            Regex("\"actions/checkout@v4\"").findAll(flowRedefinition.stderr).count(),
+        )
+
+        val laterRedefinition =
+            runPinVerifier(
+                """
+                defaults: &pin actions/checkout@v4
+                jobs:
+                  invalid:
+                    steps:
+                      - uses: *pin
+                later: &pin actions/checkout@${"f".repeat(40)}
+                """.trimIndent(),
+            )
+        assertEquals(1, laterRedefinition.exitCode)
+        assertTrue(laterRedefinition.stderr.contains("\"actions/checkout@v4\""))
+
+        val validRedefinition =
+            runPinVerifier(
+                """
+                earlier: &pin actions/checkout@v4
+                current: &pin actions/checkout@${"1".repeat(40)}
+                jobs:
+                  valid:
+                    steps:
+                      - uses: *pin
+                """.trimIndent(),
+            )
+        assertEquals(0, validRedefinition.exitCode, validRedefinition.stderr)
+
+        val crossDocumentAlias =
+            runPinVerifier(
+                """
+                defaults: &pin actions/checkout@${"2".repeat(40)}
+                ---
+                jobs:
+                  invalid:
+                    steps:
+                      - uses: *pin
+                """.trimIndent(),
+            )
+        assertEquals(1, crossDocumentAlias.exitCode)
+        assertTrue(crossDocumentAlias.stderr.contains("uses must be a scalar string"))
+
         val valid =
             runPinVerifier(
                 """
