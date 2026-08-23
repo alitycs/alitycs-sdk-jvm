@@ -12,7 +12,8 @@ Java interoperability, thread safety, and graceful lifecycle behavior.
 
 ## Local checks
 
-Use JDK 11+, the committed wrapper, CPython 3.11 through 3.14, and Ruby 3.3 or newer:
+Use JDK 11+, the committed wrapper, Bash, Git, jq, CPython 3.11 through 3.14, and Ruby 3.3
+or newer:
 
 ```bash
 ./gradlew test
