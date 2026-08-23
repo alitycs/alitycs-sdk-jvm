@@ -83,6 +83,11 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("await installationGithub.paginate("))
         assertFalse(workflow.contains("headers: { authorization:"))
         assertTrue(workflow.contains("\"GET /installation/repositories\""))
+        assertTrue(
+            workflow.contains(
+                "const sdkRepositoryPattern = /^alitycs-sdk-[a-z0-9]+(?:-[a-z0-9]+)*$/;",
+            ),
+        )
         assertEquals(3, Regex("await inspectInstallation\\(\\)").findAll(workflow).count())
         assertTrue(workflow.contains("!initialInstallation.includesCurrent"))
         assertTrue(workflow.contains("!currentInstallation.includesCurrent"))
@@ -127,6 +132,39 @@ class CodeRabbitGatePolicyTest {
         assertFalse(reviewSignal.contains("secrets."))
         assertFalse(reviewSignal.contains("environment:"))
         assertFalse(reviewSignal.contains("concurrency:"))
+    }
+
+    @Test
+    fun `release builds are unprivileged and tags must target main history`() {
+        val workflow = read(".github/workflows/release.yml")
+        val buildJob = workflow.substringAfter("  build:\n").substringBefore("\n  release:\n")
+        val releaseJob = workflow.substringAfter("\n  release:\n")
+
+        assertTrue(Regex("(?m)^permissions: \\{\\}$").containsMatchIn(workflow))
+        assertTrue(buildJob.contains("permissions:\n      contents: read"))
+        assertFalse(buildJob.contains("contents: write"))
+        assertFalse(buildJob.contains("id-token: write"))
+        assertFalse(buildJob.contains("attestations: write"))
+        assertTrue(buildJob.contains("persist-credentials: false"))
+        assertTrue(
+            buildJob.contains(
+                "git fetch --no-tags --force origin \"+refs/heads/main:refs/remotes/origin/main\"",
+            ),
+        )
+        assertTrue(buildJob.contains("git cat-file -t \"${'$'}GITHUB_REF\""))
+        assertTrue(
+            buildJob.contains(
+                "git merge-base --is-ancestor \"${'$'}tag_commit\" \"${'$'}main_commit\"",
+            ),
+        )
+        assertTrue(Regex("actions/upload-artifact@[0-9a-f]{40}").containsMatchIn(buildJob))
+        assertTrue(releaseJob.contains("needs: build"))
+        assertTrue(releaseJob.contains("attestations: write"))
+        assertTrue(releaseJob.contains("contents: write"))
+        assertTrue(releaseJob.contains("id-token: write"))
+        assertTrue(
+            Regex("actions/download-artifact@[0-9a-f]{40}").containsMatchIn(releaseJob),
+        )
     }
 
     @Test
@@ -196,6 +234,18 @@ class CodeRabbitGatePolicyTest {
         assertTrue(requirements.contains("check-jsonschema==0.37.4"))
         assertTrue(requirements.contains("--hash=sha256:"))
         assertTrue(
+            Regex(
+                "From a clean checkout of the merged `main`, rerun `\\./scripts/verify-workflow-pins\\.rb`,\\s+`\\./scripts/validate-coderabbit\\.sh`, and the repository policy tests, then open",
+                RegexOption.DOT_MATCHES_ALL,
+            ).containsMatchIn(docs),
+        )
+        assertTrue(
+            Regex(
+                "From a clean checkout of the new `main`, rerun the workflow-pin\\s+verifier, pinned-schema validator, and policy tests before opening a canary",
+                RegexOption.DOT_MATCHES_ALL,
+            ).containsMatchIn(docs),
+        )
+        assertTrue(
             requirements.contains("# printf 'check-jsonschema==0.37.4\\n' | uv pip compile"),
         )
         assertFalse(
@@ -221,11 +271,15 @@ class CodeRabbitGatePolicyTest {
                 jobs:
                   reusable:
                     uses: alitycs/reusable/.github/workflows/ci.yml@main
+                  invalid-local-workflow:
+                    uses: $/.github/actions/not-a-workflow
                   invalid:
                     steps:
                       - "uses" : actions/checkout@v4
                       - { uses: actions/setup-java@v4 }
                       - uses: docker://alpine:latest
+                      - uses: $/.github/workflows/not-an-action.yml
+                      - uses: $/.github/actions/local-action@main
                       - *uses-key: *mutable-action
                       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
                         uses: actions/cache@v4
@@ -239,6 +293,9 @@ class CodeRabbitGatePolicyTest {
         assertTrue(invalid.stderr.contains("\"actions/setup-java@v4\""))
         assertTrue(invalid.stderr.contains("\"docker://alpine:latest\""))
         assertTrue(invalid.stderr.contains("\"actions/cache@v4\""))
+        assertTrue(invalid.stderr.contains("\"$/.github/actions/not-a-workflow\""))
+        assertTrue(invalid.stderr.contains("\"$/.github/workflows/not-an-action.yml\""))
+        assertTrue(invalid.stderr.contains("\"$/.github/actions/local-action@main\""))
 
         val flowRedefinition =
             runPinVerifier(
@@ -303,6 +360,8 @@ class CodeRabbitGatePolicyTest {
                     uses: alitycs/reusable/.github/workflows/ci.yml@${"a".repeat(40)}
                     with:
                       uses: actions/reusable-input@v4
+                  same-commit-workflow:
+                    uses: $/.github/workflows/ci.yml
                   actions:
                     env:
                       uses: actions/job-environment@v4
@@ -314,6 +373,7 @@ class CodeRabbitGatePolicyTest {
                           uses: actions/step-environment@v4
                       - { uses: "docker://ghcr.io/alitycs/build@sha256:${"c".repeat(64)}" }
                       - uses: ./local-action
+                      - uses: $/.github/actions/local-action
                 """.trimIndent(),
             )
         assertEquals(0, valid.exitCode, valid.stderr)
@@ -337,6 +397,7 @@ class CodeRabbitGatePolicyTest {
                     - uses: actions/checkout@${"d".repeat(40)}
                       with:
                         uses: actions/composite-input@v4
+                    - uses: $/.github/actions/composite-local
                 """.trimIndent(),
                 "action.yml",
             )
@@ -356,11 +417,15 @@ class CodeRabbitGatePolicyTest {
                     - uses: actions/checkout@v4
                       with:
                         uses: actions/harmless-input@v4
+                    - uses: $/.github/workflows/not-an-action.yml
                 """.trimIndent(),
                 "action.yaml",
             )
         assertEquals(1, invalidComposite.exitCode)
         assertTrue(invalidComposite.stderr.contains("\"actions/checkout@v4\""))
+        assertTrue(
+            invalidComposite.stderr.contains("\"$/.github/workflows/not-an-action.yml\""),
+        )
         assertFalse(invalidComposite.stderr.contains("\"actions/harmless-input@v4\""))
     }
 
@@ -388,6 +453,27 @@ class CodeRabbitGatePolicyTest {
             ),
         )
         assertTrue(audit.contains("must select every active public SDK"))
+        val sdkRepositoryPattern = Regex("^alitycs-sdk-[a-z0-9]+(?:-[a-z0-9]+)*$")
+        listOf("alitycs-sdk-js", "alitycs-sdk-jvm", "alitycs-sdk-react-native").forEach {
+            name ->
+            assertTrue(sdkRepositoryPattern.matches(name))
+        }
+        listOf(
+            "alitycs-sdk-cpp.v2",
+            "alitycs-sdk-cpp_v2",
+            "alitycs-sdk--go",
+            "alitycs-sdk-go-",
+            "Alitycs-sdk-go",
+        ).forEach { name ->
+            assertFalse(sdkRepositoryPattern.matches(name))
+        }
+        assertTrue(
+            audit.contains(
+                "readonly sdk_repository_pattern='^alitycs-sdk-[a-z0-9]+(-[a-z0-9]+)*$'",
+            ),
+        )
+        assertEquals(2, Regex("test\\(\\${'$'}sdk_pattern\\)").findAll(audit).count())
+        assertTrue(docs.contains("lowercase alphanumeric name segments"))
         assertTrue(audit.contains("--argjson require_gate \"\$require_gate\""))
         assertTrue(audit.contains("if [[ \"\${1:-}\" == \"--pre-restore\" ]]"))
         assertTrue(docs.contains("./scripts/audit-coderabbit-github.sh --pre-restore"))
