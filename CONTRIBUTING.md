@@ -46,8 +46,8 @@ and trusted evaluator live here; see [CodeRabbit review gate](docs/coderabbit.md
 
 Supported bot accounts such as Dependabot, Renovate, and GitHub Actions are intentionally excluded
 from CodeRabbit review. Those pull requests still need all required CI checks and approval from a
-human maintainer on the latest commit. If approval lands after the evaluator times out, comment
-`/coderabbit-gate` to reconcile it.
+human maintainer on the latest commit. Review submissions and dismissals automatically reconcile
+the gate; comment `/coderabbit-gate` only to recover from a missed GitHub event.
 
 Administrative break-glass changes to review protections are reserved for service outages or urgent
 security response. Record the reason in the pull request, restore the normal gate immediately, and
