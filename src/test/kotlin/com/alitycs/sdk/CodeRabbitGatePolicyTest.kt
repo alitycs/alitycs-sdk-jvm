@@ -46,6 +46,16 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("runPath !== reviewSignalPath"))
         assertTrue(workflow.contains("pullRequest.merge_commit_sha === runHeadSha"))
         assertTrue(workflow.contains("new Set(pullNumbers).size !== 1"))
+        assertTrue(workflow.contains("if (unique.length > 256)"))
+        assertTrue(
+            workflow.contains("Refusing to create more than 256 reconciliation jobs."),
+        )
+        assertTrue(
+            workflow.contains("if (!/^[0-9a-f]{40}${'$'}/.test(runHeadSha))"),
+        )
+        assertTrue(
+            workflow.contains("The canonical review signal has no valid head SHA."),
+        )
         assertTrue(workflow.contains("const workflowsPath = \".github/workflows\""))
         assertTrue(workflow.contains("const protectedObjects = ["))
         assertTrue(workflow.contains("{ path: workflowsPath, mode: \"040000\", type: \"tree\" }"))
@@ -141,10 +151,24 @@ class CodeRabbitGatePolicyTest {
         val workflow = read(".github/workflows/release.yml")
         val readme = read("README.md")
         val releaseGuide = read("docs/RELEASING.md")
+        val policy = read(".coderabbit.yaml")
         val buildJob = workflow.substringAfter("  build:\n").substringBefore("\n  release:\n")
         val releaseJob = workflow.substringAfter("\n  release:\n")
+        val releasePolicy =
+            policy.substringAfter("    - path: \".github/workflows/release.yml\"")
+                .substringBefore("\n    - path: \".github/workflows/**\"")
 
         assertTrue(Regex("(?m)^permissions: \\{\\}$").containsMatchIn(workflow))
+        assertFalse(Regex("(?m)^concurrency:").containsMatchIn(workflow))
+        assertTrue(releasePolicy.contains("Do not add an Actions concurrency key"))
+        assertTrue(releasePolicy.contains("Concurrency groups are repository-global"))
+        assertTrue(releaseGuide.contains("intentionally has no Actions concurrency group"))
+        assertTrue(releasePolicy.contains("immutable tag and version publication identities"))
+        assertTrue(
+            Regex("immutable tag and version\\s+publication identities")
+                .containsMatchIn(releaseGuide),
+        )
+        assertTrue(releaseGuide.contains("without that repository-global lock"))
         assertTrue(buildJob.contains("permissions:\n      contents: read"))
         assertFalse(buildJob.contains("contents: write"))
         assertFalse(buildJob.contains("id-token: write"))
@@ -592,6 +616,102 @@ class CodeRabbitGatePolicyTest {
                 "invalid Docker action image \"../Dockerfile\"",
             ),
         )
+    }
+
+    @Test
+    fun `workflow pin verifier rejects YAML merge keys everywhere`() {
+        val immutableAction = "actions/checkout@${"a".repeat(40)}"
+        val fixtures =
+            listOf(
+                """
+                defaults: &defaults { uses: $immutableAction }
+                jobs:
+                  inherited-job:
+                    <<: *defaults
+                """.trimIndent(),
+                """
+                defaults: &defaults { uses: $immutableAction }
+                jobs:
+                  inherited-step:
+                    steps: [{ <<: *defaults, name: inherited }]
+                """.trimIndent(),
+                """
+                merge-key: &merge-key "<<"
+                defaults: &defaults { uses: $immutableAction }
+                jobs:
+                  aliased-key:
+                    *merge-key: *defaults
+                """.trimIndent(),
+                """
+                defaults: &defaults { value: harmless }
+                metadata:
+                  nested: { <<: *defaults }
+                jobs:
+                  valid:
+                    steps:
+                      - uses: $immutableAction
+                """.trimIndent(),
+            )
+
+        fixtures.forEach { fixture ->
+            val result = runPinVerifier(fixture)
+            assertEquals(1, result.exitCode)
+            assertTrue(
+                result.stderr.contains("YAML merge keys (<<) are not supported"),
+                result.stderr,
+            )
+        }
+
+        val duplicateMergeKeys =
+            runPinVerifier(
+                """
+                defaults: &defaults { uses: $immutableAction }
+                jobs:
+                  duplicate:
+                    <<: *defaults
+                    <<: *defaults
+                """.trimIndent(),
+            )
+        assertEquals(1, duplicateMergeKeys.exitCode)
+        assertEquals(
+            2,
+            Regex("YAML merge keys \\(<<\\) are not supported")
+                .findAll(duplicateMergeKeys.stderr).count(),
+            duplicateMergeKeys.stderr,
+        )
+
+        val actionMetadata =
+            runPinVerifier(
+                """
+                defaults: &defaults { description: inherited }
+                inputs:
+                  settings: { <<: *defaults }
+                runs:
+                  using: composite
+                  steps:
+                    - uses: $immutableAction
+                """.trimIndent(),
+                "action.yml",
+            )
+        assertEquals(1, actionMetadata.exitCode)
+        assertTrue(actionMetadata.stderr.contains("YAML merge keys (<<) are not supported"))
+
+        val harmlessValue =
+            runPinVerifier(
+                """
+                marker: "<<"
+                jobs:
+                  valid:
+                    steps:
+                      - uses: $immutableAction
+                """.trimIndent(),
+            )
+        assertEquals(0, harmlessValue.exitCode, harmlessValue.stderr)
+
+        val docs = read("docs/coderabbit.md")
+        val policy = read(".coderabbit.yaml")
+        assertTrue(policy.contains("Reject YAML merge keys (`<<`) anywhere"))
+        assertTrue(docs.contains("YAML merge keys (`<<`) are rejected anywhere"))
     }
 
     @Test

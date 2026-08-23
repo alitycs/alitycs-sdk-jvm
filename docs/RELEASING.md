@@ -12,7 +12,10 @@
    read-only job. A separate minimal-permission job downloads and attests the reproducible JAR,
    sources, POM, and checksums, then creates the GitHub Release. Before publication, it fetches the
    tag again and requires its annotated-tag object and target commit to match the identities
-   recorded by the build job.
+   recorded by the build job. The workflow intentionally has no Actions concurrency group because
+   those names are repository-global and a pull-request-controlled workflow could reserve one to
+   block a tag run. Immutable tags, the fresh identity recheck, and immutable tag and version
+   publication identities provide duplicate-release safety without that repository-global lock.
 
 Maven Central publication is intentionally not attempted until ownership of `com.alitycs`, artifact
 signing, and Central Portal credentials are configured. Add that deployment only after those
