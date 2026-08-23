@@ -150,12 +150,15 @@ class CodeRabbitGatePolicyTest {
         assertFalse(buildJob.contains("id-token: write"))
         assertFalse(buildJob.contains("attestations: write"))
         assertTrue(buildJob.contains("persist-credentials: false"))
+        assertTrue(buildJob.contains("tag_commit: \${{ steps.verify_tag.outputs.tag_commit }}"))
+        assertTrue(buildJob.contains("tag_object: \${{ steps.verify_tag.outputs.tag_object }}"))
         assertTrue(
             buildJob.contains(
                 "git fetch --no-tags --force origin \"+refs/heads/main:refs/remotes/origin/main\"",
             ),
         )
         assertTrue(buildJob.contains("git cat-file -t \"${'$'}GITHUB_REF\""))
+        assertTrue(buildJob.contains("if [[ \"${'$'}tag_commit\" != \"${'$'}GITHUB_SHA\" ]]"))
         assertTrue(
             buildJob.contains(
                 "git merge-base --is-ancestor \"${'$'}tag_commit\" \"${'$'}main_commit\"",
@@ -166,6 +169,22 @@ class CodeRabbitGatePolicyTest {
         assertTrue(releaseJob.contains("attestations: write"))
         assertTrue(releaseJob.contains("contents: write"))
         assertTrue(releaseJob.contains("id-token: write"))
+        assertTrue(releaseJob.contains("Recheck immutable release tag"))
+        assertTrue(
+            releaseJob.contains(
+                "\"+refs/tags/\${GITHUB_REF_NAME}:refs/tags/\${GITHUB_REF_NAME}\"",
+            ),
+        )
+        assertTrue(
+            releaseJob.contains(
+                "[[ \"${'$'}current_tag_object\" != \"${'$'}EXPECTED_TAG_OBJECT\" ]]",
+            ),
+        )
+        assertTrue(
+            releaseJob.contains(
+                "[[ \"${'$'}current_tag_commit\" != \"${'$'}EXPECTED_TAG_COMMIT\" ]]",
+            ),
+        )
         assertTrue(
             Regex("actions/download-artifact@[0-9a-f]{40}").containsMatchIn(releaseJob),
         )
@@ -706,6 +725,21 @@ class CodeRabbitGatePolicyTest {
         )
         assertTrue(audit.contains("ruby - --git-ref \"\$local_head\""))
         assertTrue(audit.contains("readonly protected_workflow_tree=\".github/workflows\""))
+        assertTrue(
+            audit.contains(
+                "readonly release_tag_ruleset_name=\"Immutable release tags\"",
+            ),
+        )
+        assertTrue(
+            audit.contains(
+                "\"repos/\$repository/rulesets?includes_parents=false&targets=tag&per_page=100\"",
+            ),
+        )
+        assertTrue(audit.contains(".conditions.ref_name.include == [\"refs/tags/v*\"]"))
+        assertTrue(audit.contains("(.bypass_actors // []) == []"))
+        assertTrue(audit.contains(".current_user_can_bypass == \"never\""))
+        assertTrue(audit.contains("([.rules[].type] | sort)"))
+        assertFalse(audit.contains("update_allows_fetch_and_merge"))
         assertTrue(audit.contains(".repository_selection == \"selected\""))
         assertTrue(audit.contains(".required_status_checks.checks | length == 3"))
         assertTrue(audit.contains(".permissions == {"))
