@@ -33,3 +33,18 @@ local environment files.
 Describe the user-visible effect, Kotlin and Java compatibility impact, and commands you ran. Keep
 the changelog current for consumer-facing changes. By contributing, you agree that your
 contribution is licensed under this repository's MIT License.
+
+### Automated review
+
+CodeRabbit reviews human-authored pull requests in addition to the required GitHub Actions checks.
+Resolve its blocking findings and wait for CodeRabbit to approve the current pull-request head.
+Every new push dismisses stale approval, so the latest commit must finish its incremental review
+before the pull request can merge.
+
+Supported bot accounts such as Dependabot, Renovate, and GitHub Actions are intentionally excluded
+from CodeRabbit review. Those pull requests still need all required CI checks and approval from a
+human maintainer on the latest commit.
+
+Administrative break-glass changes to review protections are reserved for service outages or urgent
+security response. Record the reason in the pull request, restore the normal gate immediately, and
+link a follow-up issue for any deferred review or remediation.

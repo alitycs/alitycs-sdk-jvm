@@ -15,3 +15,10 @@ Describe the user-visible change and why it is needed.
 - [ ] `./gradlew koverVerify`
 - [ ] `./gradlew build`
 - [ ] `./gradlew publishToMavenLocal`
+
+## Review gate
+
+- [ ] All blocking CodeRabbit findings are resolved (human-authored pull requests).
+- [ ] CodeRabbit approved the latest commit, or this is a supported bot pull request with human
+      maintainer approval.
+- [ ] Any administrative break-glass use is explained and linked to a follow-up issue.

@@ -1,0 +1,47 @@
+inheritance: true
+
+reviews:
+  path_filters:
+    - "!build/**"
+    - "!**/build/**"
+    - "!.gradle/**"
+    - "!**/.gradle/**"
+    - "!**/generated/**"
+    - "!**/*.class"
+    - "!**/*.jar"
+  path_instructions:
+    - path: "src/main/kotlin/**/*.kt"
+      instructions: |
+        Review this Kotlin-first SDK for correctness, backwards compatibility, and JDK 11
+        compatibility. Preserve Java interop through @JvmStatic, @JvmOverloads, and the blocking
+        lifecycle wrappers. Pay particular attention to coroutine cancellation, shared mutable
+        state, queue bounds, shutdown/flush behavior, and thread safety.
+
+        The SDK sends batched JSON to the worker /events endpoint with a publishable API key in
+        Authorization: Bearer. It must not call the analytics read API or expose Tinybird tokens.
+        Organization and workspace identity come from the credential context, not caller-supplied
+        event fields. Preserve event IDs, session and anonymous identity, and the original event
+        timestamp across every retry: serving deduplication is keyed by organization, workspace,
+        timestamp, and event ID. A retry must resend the same serialized event identity.
+    - path: "src/test/kotlin/**/*.kt"
+      instructions: |
+        Require deterministic coverage for behavior changes. Check wire serialization, retry
+        identity and timestamp stability, batching boundaries, queue and lifecycle concurrency,
+        error handling, JDK 11 behavior, and both Kotlin and Java-facing APIs. Contract changes
+        should also be represented in the shared SDK conformance suite.
+    - path: "*.gradle.kts"
+      instructions: |
+        Preserve the JDK 11 target, reproducible artifacts, coverage gates, Java interoperability,
+        and Maven publication metadata. Reject dynamic or snapshot dependency versions. Any
+        dependency or plugin change must update and pass Gradle dependency verification metadata.
+    - path: "gradle/**"
+      instructions: |
+        Treat Gradle wrapper and dependency-verification changes as supply-chain sensitive. Verify
+        checksums and trusted-key scope, keep wrapper components consistent, and require a clear
+        reason for every added artifact.
+    - path: ".github/workflows/**"
+      instructions: |
+        Keep GitHub Actions pinned to immutable commit SHAs with least-privilege permissions.
+        Workflows must use the committed Gradle wrapper and dependency verification, avoid exposing
+        secrets to untrusted pull-request code, and retain the existing test, coverage, build, and
+        publication safeguards.
