@@ -137,6 +137,8 @@ class CodeRabbitGatePolicyTest {
     @Test
     fun `release builds are unprivileged and tags must target main history`() {
         val workflow = read(".github/workflows/release.yml")
+        val readme = read("README.md")
+        val releaseGuide = read("docs/RELEASING.md")
         val buildJob = workflow.substringAfter("  build:\n").substringBefore("\n  release:\n")
         val releaseJob = workflow.substringAfter("\n  release:\n")
 
@@ -165,6 +167,10 @@ class CodeRabbitGatePolicyTest {
         assertTrue(
             Regex("actions/download-artifact@[0-9a-f]{40}").containsMatchIn(releaseJob),
         )
+        listOf(readme, releaseGuide).forEach { documentation ->
+            assertTrue(documentation.contains("vMAJOR.MINOR.PATCH-PRERELEASE"))
+            assertTrue(documentation.contains("v1.1.0-rc.1"))
+        }
     }
 
     @Test
@@ -467,6 +473,71 @@ class CodeRabbitGatePolicyTest {
             invalidComposite.stderr.contains("\"$/.github/workflows/not-an-action.yml\""),
         )
         assertFalse(invalidComposite.stderr.contains("\"actions/harmless-input@v4\""))
+
+        val validDockerAction =
+            runPinVerifier(
+                """
+                name: Fixture Docker action
+                description: Exercises immutable registry images
+                inputs:
+                  image:
+                    description: A harmless input named image
+                runs:
+                  using: docker
+                  image: docker://ghcr.io/alitycs/build@sha256:${"e".repeat(64)}
+                """.trimIndent(),
+                "action.yml",
+            )
+        assertEquals(0, validDockerAction.exitCode, validDockerAction.stderr)
+
+        val validLocalDockerAction =
+            runPinVerifier(
+                """
+                name: Fixture local Docker action
+                description: Exercises same-commit Dockerfiles
+                runs:
+                  using: docker
+                  image: ./containers/Dockerfile
+                """.trimIndent(),
+                "action.yaml",
+            )
+        assertEquals(0, validLocalDockerAction.exitCode, validLocalDockerAction.stderr)
+
+        val invalidDockerAction =
+            runPinVerifier(
+                """
+                name: Fixture mutable Docker action
+                description: Contains a mutable registry image
+                runs:
+                  using: docker
+                  image: docker://alpine:latest
+                """.trimIndent(),
+                "action.yml",
+            )
+        assertEquals(1, invalidDockerAction.exitCode)
+        assertTrue(
+            invalidDockerAction.stderr.contains(
+                "unpinned Docker image \"docker://alpine:latest\"",
+            ),
+        )
+
+        val invalidLocalDockerAction =
+            runPinVerifier(
+                """
+                name: Fixture invalid local Docker action
+                description: Escapes the action directory
+                runs:
+                  using: docker
+                  image: ../Dockerfile
+                """.trimIndent(),
+                "action.yml",
+            )
+        assertEquals(1, invalidLocalDockerAction.exitCode)
+        assertTrue(
+            invalidLocalDockerAction.stderr.contains(
+                "invalid Docker action image \"../Dockerfile\"",
+            ),
+        )
     }
 
     @Test

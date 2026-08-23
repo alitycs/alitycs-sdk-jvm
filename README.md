@@ -132,10 +132,11 @@ clone.
 
 ## Releases
 
-A `vMAJOR.MINOR.PATCH` tag matching the Gradle project version runs the release workflow. It rejects
-tag commits outside reviewed `main` history, builds without release credentials, and creates a
-GitHub Release with reproducible, attested artifacts and SHA-256 checksums. See
-[Releasing](docs/RELEASING.md).
+An annotated `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-PRERELEASE` tag matching the full Gradle
+project version runs the release workflow. It rejects tag commits outside reviewed `main` history,
+builds without release credentials, and creates a GitHub Release with reproducible, attested
+artifacts and SHA-256 checksums. See [Releasing](docs/RELEASING.md). Stable and prerelease examples
+are `v1.1.0` and `v1.1.0-rc.1`.
 
 ## Community and security
 
