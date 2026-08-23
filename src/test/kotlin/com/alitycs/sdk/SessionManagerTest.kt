@@ -63,4 +63,17 @@ class SessionManagerTest {
         s1.userId = "modified"
         assertNull(manager.getSession().userId)
     }
+
+    @Test
+    fun `reset rotates session and anonymous identity`() {
+        val manager = SessionManager(30_000)
+        manager.setUserId("user-1")
+        val before = manager.getSession()
+
+        val after = manager.reset()
+
+        assertNotEquals(before.id, after.id)
+        assertNotEquals(before.anonymousId, after.anonymousId)
+        assertNull(after.userId)
+    }
 }

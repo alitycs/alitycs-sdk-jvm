@@ -177,6 +177,29 @@ class SdkIntegrationTest {
     }
 
     @Test
+    fun `captureError serializes the error event type`() = runTest {
+        val sdk = Alitycs.init(
+            AlitycsConfig(
+                apiKey = "integration-test-key",
+                endpoint = "http://localhost:$port/events",
+                batching = true,
+                flushInterval = 60_000L,
+                flushSize = 100
+            )
+        )
+
+        sdk.captureError("checkout_failed", mapOf("code" to "PAYMENT"))
+        sdk.flush()
+        sdk.shutdown()
+
+        val batch = json.parseToJsonElement(receivedBodies[0]).jsonObject
+        val event = batch["events"]!!.jsonArray[0].jsonObject
+        assertEquals("error", event["eventType"]!!.jsonPrimitive.content)
+        assertEquals("checkout_failed", event["event"]!!.jsonPrimitive.content)
+        assertEquals("PAYMENT", event["properties"]!!.jsonObject["code"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `authorization header is sent correctly`() = runTest {
         var authHeader: String? = null
         server.removeContext("/events")

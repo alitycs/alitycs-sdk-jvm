@@ -28,11 +28,25 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     private val globalProperties = ConcurrentHashMap<String, Any?>()
     private val inFlight = ConcurrentHashMap.newKeySet<Job>()
 
+    @JvmOverloads
     fun track(eventName: String, properties: Map<String, Any?> = emptyMap()) {
         if (eventName.isBlank()) return
         enqueue(EventType.TRACK, eventName, properties)
     }
 
+    /** Server-only trusted revenue ingestion. Requires a secret key with revenue:write. */
+    @JvmOverloads
+    fun trackRevenue(payload: RevenuePayload, properties: Map<String, Any?> = emptyMap()) {
+        enqueue(EventType.TRACK, "revenue_${payload.kind}", properties, payload)
+    }
+
+    @JvmOverloads
+    fun captureError(errorName: String, properties: Map<String, Any?> = emptyMap()) {
+        if (errorName.isBlank()) return
+        enqueue(EventType.ERROR, errorName, properties)
+    }
+
+    @JvmOverloads
     fun identify(userId: String, traits: Map<String, Any?> = emptyMap()) {
         if (userId.isBlank()) return
         this.userId = userId
@@ -43,6 +57,12 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         })
     }
 
+    fun reset() {
+        userId = null
+        sessionManager.reset()
+    }
+
+    @JvmOverloads
     fun page(name: String? = null, properties: Map<String, Any?> = emptyMap()) {
         val pageName = if (name.isNullOrBlank()) "page_view" else name
         enqueue(EventType.PAGE, pageName, properties)
@@ -97,7 +117,12 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     val pending: Int
         get() = batchManager?.pending ?: inFlight.size
 
-    private fun enqueue(type: EventType, name: String, properties: Map<String, Any?>?) {
+    private fun enqueue(
+        type: EventType,
+        name: String,
+        properties: Map<String, Any?>?,
+        revenue: RevenuePayload? = null,
+    ) {
         sessionManager.touch()
         val session = sessionManager.getSession()
 
@@ -115,6 +140,7 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
             sessionId = session.id,
             timestamp = System.currentTimeMillis(),
             properties = serializeProperties(merged),
+            revenue = revenue,
             context = collectContext()
         )
 
@@ -159,9 +185,26 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         }
 
         @JvmStatic
+        @JvmName("trackRevenueDefault")
+        fun trackRevenue(payload: RevenuePayload, properties: Map<String, Any?> = emptyMap()) {
+            defaultInstance?.trackRevenue(payload, properties)
+        }
+
+        @JvmStatic
+        @JvmName("captureErrorDefault")
+        fun captureError(errorName: String, properties: Map<String, Any?> = emptyMap()) {
+            defaultInstance?.captureError(errorName, properties)
+        }
+
+        @JvmStatic
         @JvmName("identifyDefault")
         fun identify(userId: String, traits: Map<String, Any?> = emptyMap()) {
             defaultInstance?.identify(userId, traits)
+        }
+
+        @JvmStatic
+        fun resetDefault() {
+            defaultInstance?.reset()
         }
 
         @JvmStatic

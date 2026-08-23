@@ -15,9 +15,11 @@ class BatchManager(
     private val queue = ConcurrentLinkedQueue<AnalyticsEvent>()
     private val flushMutex = Mutex()
     private var timerJob: Job? = null
+    private var scope: CoroutineScope? = null
 
     fun start(scope: CoroutineScope) {
         if (timerJob != null) return
+        this.scope = scope
         timerJob = scope.launch {
             while (isActive) {
                 delay(flushInterval)
@@ -31,6 +33,7 @@ class BatchManager(
     fun stop() {
         timerJob?.cancel()
         timerJob = null
+        scope = null
     }
 
     fun add(event: AnalyticsEvent) {
@@ -41,6 +44,10 @@ class BatchManager(
             return
         }
         queue.add(event)
+
+        if (queue.size >= flushSize) {
+            scope?.launch { flush() }
+        }
     }
 
     suspend fun flush() {

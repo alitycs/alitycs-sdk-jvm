@@ -1,6 +1,6 @@
 package com.alitycs.sdk
 
-data class AlitycsConfig(
+data class AlitycsConfig @JvmOverloads constructor(
     val apiKey: String,
     val endpoint: String = "https://api.alitycs.com/events",
     val flushInterval: Long = 10_000L,

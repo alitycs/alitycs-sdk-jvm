@@ -1,6 +1,7 @@
 package com.alitycs.sdk
 
 import kotlinx.coroutines.delay
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import java.net.URI
 import java.net.http.HttpClient
@@ -14,7 +15,11 @@ class HttpTransport(
     private val debug: Boolean
 ) {
     private val client: HttpClient = HttpClient.newHttpClient()
-    private val json = Json { encodeDefaults = true }
+    @OptIn(ExperimentalSerializationApi::class)
+    private val json = Json {
+        encodeDefaults = true
+        explicitNulls = false
+    }
 
     suspend fun send(payload: BatchPayload) {
         val body = json.encodeToString(BatchPayload.serializer(), payload)

@@ -3,6 +3,7 @@ package com.alitycs.sdk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import java.util.concurrent.atomic.AtomicReference
@@ -101,6 +102,27 @@ class BatchManagerTest {
 
         advanceTimeBy(5_001)
         assertNotNull(sent.get())
+        manager.stop()
+    }
+
+    @Test
+    fun `flush size schedules delivery immediately`() = runTest {
+        val sent = AtomicReference<BatchPayload?>(null)
+        val manager = BatchManager(
+            flushSize = 2,
+            flushInterval = 60_000L,
+            maxQueueSize = 100,
+            debug = false,
+            sendFn = { sent.set(it) },
+        )
+        manager.start(this)
+
+        manager.add(makeEvent("event1"))
+        manager.add(makeEvent("event2"))
+        runCurrent()
+
+        assertEquals(listOf("event1", "event2"), sent.get()?.events?.map { it.event })
+        assertEquals(0, manager.pending)
         manager.stop()
     }
 }

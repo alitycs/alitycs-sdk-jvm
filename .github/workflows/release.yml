@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  attestations: write
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release
+    if: github.repository == 'alitycs/alitycs-sdk-jvm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "11"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Verify and build release
+        run: >-
+          ./gradlew --no-daemon clean test koverVerify build
+          generatePomFileForMavenJavaPublication
+          verifyReleaseVersion -PreleaseTag="${GITHUB_REF_NAME}"
+      - name: Prepare release artifacts
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+          cp build/libs/*.jar release/
+          cp build/publications/mavenJava/pom-default.xml "release/alitycs-sdk-jvm-${version}.pom"
+          (cd release && sha256sum *.jar *.pom > SHA256SUMS)
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" release/*
+          --verify-tag
+          --generate-notes
+          --title "${GITHUB_REF_NAME}"

@@ -22,6 +22,12 @@ class SessionManager(private val sessionTimeout: Long) {
         session = session.copy(userId = userId, lastActivity = System.currentTimeMillis())
     }
 
+    @Synchronized
+    fun reset(): SessionData {
+        session = create()
+        return session.copy()
+    }
+
     private fun isExpired(): Boolean =
         System.currentTimeMillis() - session.lastActivity > sessionTimeout
 

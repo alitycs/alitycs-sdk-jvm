@@ -1,5 +1,6 @@
 package com.alitycs.sdk
 
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.assertThrows
@@ -11,6 +12,7 @@ class AlitycsTest {
         endpoint = if (port > 0) "http://localhost:$port/events" else "http://localhost:1/events",
         flushInterval = 60_000L,
         flushSize = 100,
+        maxRetries = 0,
         batching = true,
         debug = false
     )
@@ -47,6 +49,14 @@ class AlitycsTest {
         val sdk = Alitycs.init(makeConfig())
         sdk.track("")
         assertEquals(0, sdk.pending)
+    }
+
+    @Test
+    fun `captureError enqueues explicit errors and ignores blank names`() {
+        val sdk = Alitycs.init(makeConfig())
+        sdk.captureError("checkout_failed", mapOf("retryable" to true))
+        sdk.captureError("")
+        assertEquals(1, sdk.pending)
     }
 
     @Test
@@ -115,7 +125,8 @@ class AlitycsTest {
     fun `initDefault sets default instance for static methods`() {
         val sdk = Alitycs.initDefault(makeConfig())
         Alitycs.track("static_event")
-        assertEquals(1, sdk.pending)
+        Alitycs.captureError("static_error")
+        assertEquals(2, sdk.pending)
     }
 
     @Test
@@ -125,5 +136,47 @@ class AlitycsTest {
         sdk.track("event2")
         sdk.track("event3")
         assertEquals(3, sdk.pending)
+    }
+
+    @Test
+    fun `reset and blocking lifecycle wrappers complete queued delivery`() {
+        val sdk = Alitycs.init(makeConfig())
+        sdk.identify("blocking-user")
+        sdk.trackRevenue(
+            RevenuePayload.transaction(
+                factId = "blocking-payment",
+                amount = "19.99",
+                currency = "USD",
+            ),
+        )
+        sdk.reset()
+        sdk.track("after_reset")
+
+        sdk.flushBlocking()
+        assertEquals(0, sdk.pending)
+        sdk.shutdownBlocking()
+    }
+
+    @Test
+    fun `default instance exposes the complete static capability surface`() = runBlocking {
+        val sdk = Alitycs.initDefault(makeConfig())
+
+        Alitycs.setDefaultGlobalProperties(mapOf("suite" to "jvm-static"))
+        assertEquals("jvm-static", Alitycs.getDefaultGlobalProperties()["suite"])
+        Alitycs.identify("static-user")
+        Alitycs.page("StaticPage")
+        Alitycs.trackRevenue(
+            RevenuePayload.transaction(
+                factId = "static-payment",
+                amount = "7.00",
+                currency = "USD",
+            ),
+        )
+        Alitycs.resetDefault()
+
+        assertEquals(3, sdk.pending)
+        Alitycs.flushDefault()
+        Alitycs.shutdownDefault()
+        assertTrue(Alitycs.getDefaultGlobalProperties().isEmpty())
     }
 }
