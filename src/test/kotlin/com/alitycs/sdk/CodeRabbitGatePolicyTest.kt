@@ -381,6 +381,183 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
+    fun `workflow runner labels are structurally explicit and versioned`() {
+        val immutableWorkflow =
+            "alitycs/reusable/.github/workflows/ci.yml@${"a".repeat(40)}"
+        val valid =
+            runPinVerifier(
+                """
+                runner: &runner ubuntu-24.04
+                job: &job
+                  runs-on: *runner
+                  steps:
+                    - run: "true"
+                jobs:
+                  aliased-job: *job
+                  ubuntu-arm:
+                    runs-on: ubuntu-24.04-arm64-large
+                  windows:
+                    runs-on: windows-2025
+                  windows-arm:
+                    runs-on: windows-2025-arm64
+                  macos:
+                    runs-on: macos-15
+                  macos-large:
+                    runs-on: macos-15-xlarge
+                  reusable:
+                    uses: $immutableWorkflow
+                """.trimIndent(),
+            )
+        assertEquals(0, valid.exitCode, valid.stderr)
+
+        val invalidLiterals =
+            runPinVerifier(
+                """
+                jobs:
+                  ubuntu-latest:
+                    runs-on: ubuntu-latest
+                  windows-latest:
+                    runs-on: windows-latest
+                  macos-latest:
+                    runs-on: macos-latest
+                  versioned-latest:
+                    runs-on: macos-15-latest
+                  expression:
+                    runs-on: "${'$'}{{ matrix.os }}"
+                  uppercase-base:
+                    runs-on: Ubuntu-24.04
+                  uppercase-segment:
+                    runs-on: ubuntu-24.04-ARM
+                  malformed-ubuntu:
+                    runs-on: ubuntu-24.4
+                  malformed-windows:
+                    runs-on: windows-2025.1
+                  malformed-macos:
+                    runs-on: macos-15.0
+                  self-hosted:
+                    runs-on: self-hosted
+                """.trimIndent(),
+            )
+        assertEquals(1, invalidLiterals.exitCode)
+        listOf(
+            "ubuntu-latest",
+            "windows-latest",
+            "macos-latest",
+            "macos-15-latest",
+            "${'$'}{{ matrix.os }}",
+            "Ubuntu-24.04",
+            "ubuntu-24.04-ARM",
+            "ubuntu-24.4",
+            "windows-2025.1",
+            "macos-15.0",
+            "self-hosted",
+        ).forEach { label ->
+            assertTrue(invalidLiterals.stderr.contains("got \"$label\""), label)
+        }
+
+        val invalidShapes =
+            runPinVerifier(
+                """
+                mapping: &mapping { group: hosted, labels: ubuntu-24.04 }
+                sequence: &sequence [ubuntu-24.04]
+                jobs:
+                  mapping:
+                    runs-on: { group: hosted, labels: ubuntu-24.04 }
+                  mapping-alias:
+                    runs-on: *mapping
+                  sequence:
+                    runs-on: [ubuntu-24.04]
+                  sequence-alias:
+                    runs-on: *sequence
+                  null:
+                    runs-on:
+                  unknown-alias:
+                    runs-on: *missing-runner
+                """.trimIndent(),
+            )
+        assertEquals(1, invalidShapes.exitCode)
+        assertEquals(
+            5,
+            Regex("workflow runs-on must be a scalar explicit versioned GitHub-hosted label")
+                .findAll(invalidShapes.stderr).count(),
+            invalidShapes.stderr,
+        )
+        assertTrue(invalidShapes.stderr.contains("got \"\""), invalidShapes.stderr)
+
+        val missingAndDuplicate =
+            runPinVerifier(
+                """
+                jobs:
+                  missing:
+                    steps:
+                      - run: "true"
+                  duplicate-runner:
+                    runs-on: ubuntu-24.04
+                    runs-on: macos-15
+                  reusable:
+                    uses: $immutableWorkflow
+                  duplicate-reusable:
+                    uses: $immutableWorkflow
+                    uses: $immutableWorkflow
+                """.trimIndent(),
+            )
+        assertEquals(1, missingAndDuplicate.exitCode)
+        assertTrue(
+            missingAndDuplicate.stderr.contains(
+                "workflow job \"missing\" must declare exactly one scalar explicit versioned",
+            ),
+        )
+        assertTrue(
+            missingAndDuplicate.stderr.contains(
+                "workflow job \"duplicate-runner\" declares runs-on more than once",
+            ),
+        )
+        assertTrue(
+            missingAndDuplicate.stderr.contains(
+                "workflow job \"duplicate-reusable\" declares uses more than once",
+            ),
+        )
+
+        val invalidJobShapes =
+            listOf(
+                "jobs: [invalid]" to "workflow jobs must be a mapping",
+                """
+                jobs:
+                  invalid: [ubuntu-24.04]
+                """.trimIndent() to "workflow job \"invalid\" must be a mapping",
+                """
+                jobs:
+                  duplicate: { runs-on: ubuntu-24.04 }
+                  duplicate: { runs-on: macos-15 }
+                """.trimIndent() to "workflow job \"duplicate\" is declared more than once",
+                """
+                jobs: { first: { runs-on: ubuntu-24.04 } }
+                jobs: { second: { runs-on: macos-15 } }
+                """.trimIndent() to "workflow must not declare jobs more than once",
+            )
+        invalidJobShapes.forEach { (fixture, expectedError) ->
+            val result = runPinVerifier(fixture)
+            assertEquals(1, result.exitCode)
+            assertTrue(result.stderr.contains(expectedError), result.stderr)
+        }
+
+        val docs = read("docs/coderabbit.md")
+        val policy = read(".coderabbit.yaml")
+        assertTrue(
+            policy.contains(
+                "exactly one scalar explicit versioned GitHub-hosted `runs-on` label",
+            ),
+        )
+        assertTrue(policy.contains("reusable-workflow jobs with `uses` may omit it"))
+        assertTrue(
+            docs.contains(
+                "(ubuntu-<NN.NN>|windows-<N>|macos-<N>)(-lowercase-segment)*",
+            ),
+        )
+        assertTrue(docs.contains("Missing or duplicate declarations"))
+    }
+
+    @Test
     fun `workflow action verifier structurally rejects mutable references`() {
         val current = runPinVerifier()
         assertEquals(0, current.exitCode, current.stderr)
@@ -398,6 +575,7 @@ class CodeRabbitGatePolicyTest {
                   invalid-local-workflow:
                     uses: $/.github/actions/not-a-workflow
                   invalid:
+                    runs-on: ubuntu-24.04
                     steps:
                       - "uses" : actions/checkout@v4
                       - { uses: actions/setup-java@v4 }
@@ -424,7 +602,7 @@ class CodeRabbitGatePolicyTest {
         val flowRedefinition =
             runPinVerifier(
                 """
-                { jobs: { invalid: { steps: [{ uses: &pin actions/checkout@v4 }, { uses: *pin }] } }, later: &pin actions/checkout@${"e".repeat(40)} }
+                { jobs: { invalid: { runs-on: ubuntu-24.04, steps: [{ uses: &pin actions/checkout@v4 }, { uses: *pin }] } }, later: &pin actions/checkout@${"e".repeat(40)} }
                 """.trimIndent(),
             )
         assertEquals(1, flowRedefinition.exitCode)
@@ -439,6 +617,7 @@ class CodeRabbitGatePolicyTest {
                 defaults: &pin actions/checkout@v4
                 jobs:
                   invalid:
+                    runs-on: ubuntu-24.04
                     steps:
                       - uses: *pin
                 later: &pin actions/checkout@${"f".repeat(40)}
@@ -454,6 +633,7 @@ class CodeRabbitGatePolicyTest {
                 current: &pin actions/checkout@${"1".repeat(40)}
                 jobs:
                   valid:
+                    runs-on: ubuntu-24.04
                     steps:
                       - uses: *pin
                 """.trimIndent(),
@@ -467,6 +647,7 @@ class CodeRabbitGatePolicyTest {
                 ---
                 jobs:
                   invalid:
+                    runs-on: ubuntu-24.04
                     steps:
                       - uses: *pin
                 """.trimIndent(),
@@ -487,6 +668,7 @@ class CodeRabbitGatePolicyTest {
                   same-commit-workflow:
                     uses: $/.github/workflows/ci.yml
                   actions:
+                    runs-on: ubuntu-24.04
                     env:
                       uses: actions/job-environment@v4
                     steps:
@@ -627,12 +809,14 @@ class CodeRabbitGatePolicyTest {
                 defaults: &defaults { uses: $immutableAction }
                 jobs:
                   inherited-job:
+                    runs-on: ubuntu-24.04
                     <<: *defaults
                 """.trimIndent(),
                 """
                 defaults: &defaults { uses: $immutableAction }
                 jobs:
                   inherited-step:
+                    runs-on: ubuntu-24.04
                     steps: [{ <<: *defaults, name: inherited }]
                 """.trimIndent(),
                 """
@@ -640,6 +824,7 @@ class CodeRabbitGatePolicyTest {
                 defaults: &defaults { uses: $immutableAction }
                 jobs:
                   aliased-key:
+                    runs-on: ubuntu-24.04
                     *merge-key: *defaults
                 """.trimIndent(),
                 """
@@ -648,6 +833,7 @@ class CodeRabbitGatePolicyTest {
                   nested: { <<: *defaults }
                 jobs:
                   valid:
+                    runs-on: ubuntu-24.04
                     steps:
                       - uses: $immutableAction
                 """.trimIndent(),
@@ -668,6 +854,7 @@ class CodeRabbitGatePolicyTest {
                 defaults: &defaults { uses: $immutableAction }
                 jobs:
                   duplicate:
+                    runs-on: ubuntu-24.04
                     <<: *defaults
                     <<: *defaults
                 """.trimIndent(),
@@ -702,6 +889,7 @@ class CodeRabbitGatePolicyTest {
                 marker: "<<"
                 jobs:
                   valid:
+                    runs-on: ubuntu-24.04
                     steps:
                       - uses: $immutableAction
                 """.trimIndent(),
@@ -733,10 +921,12 @@ class CodeRabbitGatePolicyTest {
                 service-definition: &service-definition { image: *service-image, ports: [5432] }
                 jobs:
                   scalar-container:
+                    runs-on: ubuntu-24.04
                     container: *container-image
                     services:
                       database: *service-definition
                   mapping-container:
+                    runs-on: ubuntu-24.04
                     container: *container-definition
                     services: { cache: { image: $validPortRegistryImage } }
                 """.trimIndent(),
@@ -751,6 +941,7 @@ class CodeRabbitGatePolicyTest {
                   uppercase: &uppercase-image ghcr.io/alitycs/build@sha256:${"A".repeat(64)}
                 jobs:
                   invalid-container:
+                    runs-on: ubuntu-24.04
                     container: *mutable-image
                     services:
                       uppercase: { image: *uppercase-image }
@@ -776,14 +967,18 @@ class CodeRabbitGatePolicyTest {
                   mutable: &mutable-image alpine:latest
                 jobs:
                   duplicate-container:
+                    runs-on: ubuntu-24.04
                     container: *valid-image
                     container: { image: *mutable-image }
                   duplicate-container-image:
+                    runs-on: ubuntu-24.04
                     container: { image: *valid-image, image: *mutable-image }
                   duplicate-services:
+                    runs-on: ubuntu-24.04
                     services: { valid: { image: *valid-image } }
                     services: { invalid: { image: *mutable-image } }
                   duplicate-service-image:
+                    runs-on: ubuntu-24.04
                     services: { database: { image: *valid-image, image: *mutable-image } }
                 """.trimIndent(),
             )
@@ -800,18 +995,25 @@ class CodeRabbitGatePolicyTest {
                 image-list: &image-list [ghcr.io/alitycs/build@sha256:${"f".repeat(64)}]
                 jobs:
                   invalid-container-declaration:
+                    runs-on: ubuntu-24.04
                     container: [*image-list]
                   invalid-container-image:
+                    runs-on: ubuntu-24.04
                     container: { image: *image-list }
                   missing-container-image:
+                    runs-on: ubuntu-24.04
                     container: { options: --cpus 1 }
                   invalid-services-declaration:
+                    runs-on: ubuntu-24.04
                     services: [database]
                   invalid-service-declaration:
+                    runs-on: ubuntu-24.04
                     services: { database: *image-list }
                   invalid-service-image:
+                    runs-on: ubuntu-24.04
                     services: { database: { image: *image-list } }
                   missing-service-image:
+                    runs-on: ubuntu-24.04
                     services: { database: { ports: [5432] } }
                 """.trimIndent(),
             )

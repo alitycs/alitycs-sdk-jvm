@@ -110,11 +110,16 @@ reviews:
         seed procedure. After that baseline is on main, ordinary pull requests must not change or
         add workflows; use the documented two-phase upgrade procedure. Keep permissions
         least-privileged, GitHub and reusable actions pinned to full commit SHAs, and Docker actions
-        pinned to SHA-256 digests. Keep runner labels pinned to explicit OS versions. Workflow
-        container and service images must be literal lowercase registry references pinned to full
-        SHA-256 digests. Reject YAML merge keys (`<<`) everywhere while continuing to resolve
-        ordinary anchors and aliases structurally. CI must stay deterministic, and releases must
-        be gated on the complete verification and package-integrity suite.
+        pinned to SHA-256 digests. Keep runner labels pinned to explicit OS versions: require
+        exactly one scalar explicit versioned GitHub-hosted `runs-on` label for every
+        non-reusable job; direct scalar aliases are allowed, while
+        reusable-workflow jobs with `uses` may omit it. Reject moving `*-latest` labels,
+        expressions, collections, missing or duplicate declarations, and labels outside the
+        documented Ubuntu, Windows, and macOS grammar. Workflow container and service images must
+        be literal lowercase registry references pinned to full SHA-256 digests. Reject YAML merge
+        keys (`<<`) everywhere while continuing to resolve ordinary anchors and aliases
+        structurally. CI must stay deterministic, and releases must be gated on the complete
+        verification and package-integrity suite.
 
   auto_review:
     enabled: true
