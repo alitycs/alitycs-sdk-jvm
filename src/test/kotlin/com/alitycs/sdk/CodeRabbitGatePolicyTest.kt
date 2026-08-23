@@ -595,6 +595,134 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
+    fun `workflow container and service images require literal immutable digests`() {
+        val validContainerImage = "ghcr.io/alitycs/build@sha256:${"a".repeat(64)}"
+        val validServiceImage = "postgres:16@sha256:${"b".repeat(64)}"
+        val validPortRegistryImage =
+            "registry.example.com:5000/alitycs/cache@sha256:${"c".repeat(64)}"
+
+        val valid =
+            runPinVerifier(
+                """
+                images:
+                  container: &container-image $validContainerImage
+                  service: &service-image $validServiceImage
+                container-definition: &container-definition
+                  image: *container-image
+                  options: --cpus 1
+                service-definition: &service-definition { image: *service-image, ports: [5432] }
+                jobs:
+                  scalar-container:
+                    container: *container-image
+                    services:
+                      database: *service-definition
+                  mapping-container:
+                    container: *container-definition
+                    services: { cache: { image: $validPortRegistryImage } }
+                """.trimIndent(),
+            )
+        assertEquals(0, valid.exitCode, valid.stderr)
+
+        val invalidLiterals =
+            runPinVerifier(
+                """
+                images:
+                  mutable: &mutable-image alpine:latest
+                  uppercase: &uppercase-image ghcr.io/alitycs/build@sha256:${"A".repeat(64)}
+                jobs:
+                  invalid-container:
+                    container: *mutable-image
+                    services:
+                      uppercase: { image: *uppercase-image }
+                      uppercase-registry:
+                        image: Ghcr.io/alitycs/build@sha256:${"a".repeat(64)}
+                      expression: { image: "${'$'}{{ matrix.image }}" }
+                      action-syntax:
+                        image: docker://alpine@sha256:${"d".repeat(64)}
+                """.trimIndent(),
+            )
+        assertEquals(1, invalidLiterals.exitCode)
+        assertTrue(invalidLiterals.stderr.contains("got \"alpine:latest\""))
+        assertTrue(invalidLiterals.stderr.contains("got \"ghcr.io/alitycs/build@sha256:"))
+        assertTrue(invalidLiterals.stderr.contains("got \"Ghcr.io/alitycs/build@sha256:"))
+        assertTrue(invalidLiterals.stderr.contains("got \"${'$'}{{ matrix.image }}\""))
+        assertTrue(invalidLiterals.stderr.contains("got \"docker://alpine@sha256:"))
+
+        val duplicateKeys =
+            runPinVerifier(
+                """
+                images:
+                  valid: &valid-image ghcr.io/alitycs/build@sha256:${"e".repeat(64)}
+                  mutable: &mutable-image alpine:latest
+                jobs:
+                  duplicate-container:
+                    container: *valid-image
+                    container: { image: *mutable-image }
+                  duplicate-container-image:
+                    container: { image: *valid-image, image: *mutable-image }
+                  duplicate-services:
+                    services: { valid: { image: *valid-image } }
+                    services: { invalid: { image: *mutable-image } }
+                  duplicate-service-image:
+                    services: { database: { image: *valid-image, image: *mutable-image } }
+                """.trimIndent(),
+            )
+        assertEquals(1, duplicateKeys.exitCode)
+        assertEquals(
+            4,
+            Regex("got \\\"alpine:latest\\\"").findAll(duplicateKeys.stderr).count(),
+            duplicateKeys.stderr,
+        )
+
+        val nonScalar =
+            runPinVerifier(
+                """
+                image-list: &image-list [ghcr.io/alitycs/build@sha256:${"f".repeat(64)}]
+                jobs:
+                  invalid-container-declaration:
+                    container: [*image-list]
+                  invalid-container-image:
+                    container: { image: *image-list }
+                  missing-container-image:
+                    container: { options: --cpus 1 }
+                  invalid-services-declaration:
+                    services: [database]
+                  invalid-service-declaration:
+                    services: { database: *image-list }
+                  invalid-service-image:
+                    services: { database: { image: *image-list } }
+                  missing-service-image:
+                    services: { database: { ports: [5432] } }
+                """.trimIndent(),
+            )
+        assertEquals(1, nonScalar.exitCode)
+        assertEquals(
+            3,
+            Regex("workflow container image must be a scalar literal")
+                .findAll(nonScalar.stderr).count(),
+            nonScalar.stderr,
+        )
+        assertEquals(
+            4,
+            Regex("workflow service image must be a scalar literal")
+                .findAll(nonScalar.stderr).count(),
+            nonScalar.stderr,
+        )
+
+        val readme = read("README.md")
+        val policy = read(".coderabbit.yaml")
+        val docs = read("docs/coderabbit.md")
+        assertTrue(readme.contains("CPython 3.11 through 3.14"))
+        assertTrue(
+            policy.contains(
+                "workflow job container and service images must use literal lowercase registry",
+            ),
+        )
+        assertTrue(docs.contains("scalar and mapping container forms"))
+        assertTrue(docs.contains("64 lowercase hexadecimal digits"))
+    }
+
+    @Test
     fun `local Dockerfiles must be regular tracked files`() {
         val repository = Files.createTempDirectory("alitycs-workflow-pin-fixture-")
         val actionDirectory = repository.resolve("fixture")
