@@ -47,6 +47,7 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("alitycs.repositoryRoot", layout.projectDirectory.asFile.absolutePath)
     testLogging {
         events("passed", "skipped", "failed")
     }

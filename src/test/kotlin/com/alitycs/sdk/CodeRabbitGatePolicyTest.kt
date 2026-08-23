@@ -8,7 +8,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class CodeRabbitGatePolicyTest {
-    private val repositoryRoot: Path = Path.of("").toAbsolutePath()
+    private val repositoryRoot: Path =
+        Path.of(requireNotNull(System.getProperty("alitycs.repositoryRoot")))
 
     @Test
     fun `gate executes only from the trusted base branch`() {
@@ -106,6 +107,12 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("branchPolicies[0].name === \"main\""))
         assertTrue(workflow.contains("reviewActor !== \"coderabbitai[bot]\""))
         assertTrue(workflow.contains("!context.payload.changes?.base"))
+        assertTrue(workflow.contains("error.status === 403"))
+        assertTrue(
+            workflow.contains(
+                "The router token cannot read collaborator permission; treating the actor as untrusted.",
+            ),
+        )
         assertTrue(
             Regex("actions/create-github-app-token@[0-9a-f]{40}").containsMatchIn(workflow),
         )
@@ -156,16 +163,36 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
-    fun `live schema validation only gates policy-changing pull requests`() {
+    fun `pinned validation only gates relevant pull request inputs`() {
         val workflow = read(".github/workflows/ci.yml")
         val docs = read("docs/coderabbit.md")
+        val validator = read("scripts/validate-coderabbit.sh")
+        val requirements = read("scripts/coderabbit-validator-requirements.txt")
 
-        assertTrue(workflow.contains("Detect CodeRabbit configuration changes"))
+        assertTrue(workflow.contains("Detect CodeRabbit validation input changes"))
         assertTrue(
             workflow.contains("if: steps.coderabbit-config.outputs.changed == 'true'"),
         )
-        assertTrue(workflow.contains("-- .coderabbit.yaml"))
+        listOf(
+            ".coderabbit.yaml",
+            "scripts/coderabbit-schema.v2.json",
+            "scripts/coderabbit-validator-requirements.txt",
+            "scripts/validate-coderabbit.sh",
+        ).forEach { path -> assertTrue(workflow.contains("\"$path\"")) }
+        assertTrue(
+            workflow.contains(
+                "git diff --quiet \"\$BASE_SHA\" \"\$HEAD_SHA\" -- \"\${validation_paths[@]}\"",
+            ),
+        )
         assertTrue(workflow.contains("./scripts/verify-workflow-pins.rb"))
+        assertTrue(Regex("ruby/setup-ruby@[0-9a-f]{40}").containsMatchIn(workflow))
+        assertTrue(workflow.contains("ruby-version: \"3.3.12\""))
+        assertTrue(validator.contains("--require-hashes"))
+        assertTrue(validator.contains("coderabbit-schema.v2.json"))
+        assertFalse(validator.contains("command -v check-jsonschema"))
+        assertFalse(validator.contains("https://coderabbit.ai"))
+        assertTrue(requirements.contains("check-jsonschema==0.37.4"))
+        assertTrue(requirements.contains("--hash=sha256:"))
         assertTrue(
             Regex("\\./scripts/validate-coderabbit\\.sh").findAll(docs).count() >= 3,
         )
@@ -231,6 +258,8 @@ class CodeRabbitGatePolicyTest {
         assertFalse(audit.contains(".permissions.checks =="))
         assertTrue(audit.contains("(.events // []) == []"))
         assertTrue(audit.contains("(.events | sort) == (["))
+        assertTrue(audit.contains("first(.[] | .installations[] | select("))
+        assertFalse(audit.contains("head -n 1"))
         assertTrue(
             audit.contains(
                 "readonly gate_canary_sha_variable=\"ALITYCS_CODERABBIT_GATE_CANARY_SHA\"",

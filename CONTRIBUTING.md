@@ -12,7 +12,7 @@ Java interoperability, thread safety, and graceful lifecycle behavior.
 
 ## Local checks
 
-Use JDK 11+, the committed wrapper, and Python 3:
+Use JDK 11+, the committed wrapper, Python 3.11 or newer, and Ruby 3.3 or newer:
 
 ```bash
 ./gradlew test
