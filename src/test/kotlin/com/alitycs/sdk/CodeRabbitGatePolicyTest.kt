@@ -219,6 +219,8 @@ class CodeRabbitGatePolicyTest {
                   action: &mutable-action actions/checkout@v4
                   key: &uses-key uses
                 jobs:
+                  reusable:
+                    uses: alitycs/reusable/.github/workflows/ci.yml@main
                   invalid:
                     steps:
                       - "uses" : actions/checkout@v4
@@ -230,6 +232,9 @@ class CodeRabbitGatePolicyTest {
                 """.trimIndent(),
             )
         assertEquals(1, invalid.exitCode)
+        assertTrue(
+            invalid.stderr.contains("\"alitycs/reusable/.github/workflows/ci.yml@main\""),
+        )
         assertTrue(invalid.stderr.contains("\"actions/checkout@v4\""))
         assertTrue(invalid.stderr.contains("\"actions/setup-java@v4\""))
         assertTrue(invalid.stderr.contains("\"docker://alpine:latest\""))
@@ -238,17 +243,72 @@ class CodeRabbitGatePolicyTest {
         val valid =
             runPinVerifier(
                 """
+                env:
+                  uses: actions/root-environment@v4
                 jobs:
                   valid:
                     uses: alitycs/reusable/.github/workflows/ci.yml@${"a".repeat(40)}
+                    with:
+                      uses: actions/reusable-input@v4
                   actions:
+                    env:
+                      uses: actions/job-environment@v4
                     steps:
                       - "uses": actions/checkout@${"b".repeat(40)}
+                        with:
+                          uses: actions/action-input@v4
+                        env:
+                          uses: actions/step-environment@v4
                       - { uses: "docker://ghcr.io/alitycs/build@sha256:${"c".repeat(64)}" }
                       - uses: ./local-action
                 """.trimIndent(),
             )
         assertEquals(0, valid.exitCode, valid.stderr)
+
+        val validComposite =
+            runPinVerifier(
+                """
+                name: Fixture composite action
+                description: Exercises non-action uses keys
+                inputs:
+                  uses:
+                    description: A harmless input named uses
+                    required: false
+                runs:
+                  using: composite
+                  steps:
+                    - shell: bash
+                      run: echo ok
+                      env:
+                        uses: actions/composite-environment@v4
+                    - uses: actions/checkout@${"d".repeat(40)}
+                      with:
+                        uses: actions/composite-input@v4
+                """.trimIndent(),
+                "action.yml",
+            )
+        assertEquals(0, validComposite.exitCode, validComposite.stderr)
+
+        val invalidComposite =
+            runPinVerifier(
+                """
+                name: Fixture composite action
+                description: Contains a real mutable action reference
+                inputs:
+                  uses:
+                    description: A harmless input named uses
+                runs:
+                  using: composite
+                  steps:
+                    - uses: actions/checkout@v4
+                      with:
+                        uses: actions/harmless-input@v4
+                """.trimIndent(),
+                "action.yaml",
+            )
+        assertEquals(1, invalidComposite.exitCode)
+        assertTrue(invalidComposite.stderr.contains("\"actions/checkout@v4\""))
+        assertFalse(invalidComposite.stderr.contains("\"actions/harmless-input@v4\""))
     }
 
     @Test
@@ -321,9 +381,12 @@ class CodeRabbitGatePolicyTest {
         assertTrue(audit.contains("the recorded Gate App canary is missing, stale"))
     }
 
-    private fun runPinVerifier(input: String? = null): VerifierResult {
+    private fun runPinVerifier(
+        input: String? = null,
+        label: String = "fixture.yml",
+    ): VerifierResult {
         val command = mutableListOf("ruby", "scripts/verify-workflow-pins.rb")
-        if (input != null) command.addAll(listOf("--stdin", "fixture.yml"))
+        if (input != null) command.addAll(listOf("--stdin", label))
         val process = ProcessBuilder(command).directory(repositoryRoot.toFile()).start()
         process.outputStream.bufferedWriter().use { writer ->
             if (input != null) writer.write(input)
