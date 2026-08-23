@@ -213,6 +213,7 @@ class CodeRabbitGatePolicyTest {
         val docs = read("docs/coderabbit.md")
         val validator = read("scripts/validate-coderabbit.sh")
         val requirements = read("scripts/coderabbit-validator-requirements.txt")
+        val contributing = read("CONTRIBUTING.md")
 
         assertTrue(workflow.contains("Detect CodeRabbit validation input changes"))
         assertTrue(
@@ -243,6 +244,8 @@ class CodeRabbitGatePolicyTest {
             validator.contains("not (3, 11) <= sys.version_info[:2] <= (3, 14)"),
         )
         assertTrue(validator.contains("requires CPython 3.11 through 3.14"))
+        assertTrue(contributing.contains("CPython 3.11 through 3.14"))
+        assertFalse(contributing.contains("Python 3.11 or newer"))
         assertFalse(
             Regex("readonly (?:script_dir|repository_root)=\"\\${'$'}\\(").containsMatchIn(
                 validator,
