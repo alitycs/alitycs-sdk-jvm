@@ -2,6 +2,8 @@ package com.alitycs.sdk
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Comparator
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -220,6 +222,7 @@ class CodeRabbitGatePolicyTest {
         val validator = read("scripts/validate-coderabbit.sh")
         val requirements = read("scripts/coderabbit-validator-requirements.txt")
         val contributing = read("CONTRIBUTING.md")
+        val build = read("build.gradle.kts")
 
         assertTrue(workflow.contains("Detect CodeRabbit validation input changes"))
         assertTrue(
@@ -252,6 +255,10 @@ class CodeRabbitGatePolicyTest {
         assertTrue(validator.contains("requires CPython 3.11 through 3.14"))
         assertTrue(contributing.contains("CPython 3.11 through 3.14"))
         assertFalse(contributing.contains("Python 3.11 or newer"))
+        assertTrue(build.contains("systemProperty(\"alitycs.repositoryRoot\", \".\")"))
+        assertTrue(build.contains("withPathSensitivity(PathSensitivity.RELATIVE)"))
+        assertTrue(build.contains("include(\"**/action.yml\", \"**/action.yaml\", \"**/Dockerfile\")"))
+        assertFalse(build.contains("layout.projectDirectory.asFile.absolutePath"))
         assertFalse(
             Regex("readonly (?:script_dir|repository_root)=\"\\${'$'}\\(").containsMatchIn(
                 validator,
@@ -296,10 +303,32 @@ class CodeRabbitGatePolicyTest {
         assertTrue(Regex("actions/checkout@[0-9a-f]{40}").containsMatchIn(workflow))
         assertTrue(workflow.contains("persist-credentials: false"))
         assertTrue(workflow.contains("https://coderabbit.ai/integrations/schema.v2.json"))
+        assertTrue(workflow.contains("--proto-redir '=https'"))
+        assertTrue(workflow.contains("--retry 3"))
+        assertTrue(workflow.contains("--retry-connrefused"))
+        assertTrue(workflow.contains("--max-time 60"))
         assertTrue(workflow.contains("cmp --silent \"${'$'}pinned_schema\" \"${'$'}live_schema\""))
         assertFalse(Regex("readonly [a-z_]+=\"\\${'$'}\\(").containsMatchIn(workflow))
         assertTrue(docs.contains("deliberately not a required merge check"))
         assertTrue(policy.contains("keep the scheduled live-schema drift check non-gating"))
+    }
+
+    @Test
+    fun `every GitHub-hosted job uses an explicit runner image`() {
+        val workflowDirectory = repositoryRoot.resolve(".github/workflows")
+        val workflowCorpus =
+            Files.list(workflowDirectory).use { paths ->
+                paths.iterator().asSequence()
+                    .filter { it.fileName.toString().matches(Regex(".*\\.ya?ml")) }
+                    .joinToString("\n") { Files.readString(it) }
+            }
+        val docs = read("docs/coderabbit.md")
+        val policy = read(".coderabbit.yaml")
+
+        assertFalse(workflowCorpus.contains("ubuntu-latest"))
+        assertEquals(8, Regex("runs-on: ubuntu-24\\.04").findAll(workflowCorpus).count())
+        assertTrue(docs.contains("do not use a moving `*-latest` label"))
+        assertTrue(policy.contains("runner labels pinned to explicit OS versions"))
     }
 
     @Test
@@ -541,6 +570,127 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
+    fun `local Dockerfiles must be regular tracked files`() {
+        val repository = Files.createTempDirectory("alitycs-workflow-pin-fixture-")
+        val actionDirectory = repository.resolve("fixture")
+        val actionPath = actionDirectory.resolve("action.yml")
+        val dockerfilePath = actionDirectory.resolve("Dockerfile")
+        val targetPath = actionDirectory.resolve("real.Dockerfile")
+        val missingDirectory = actionDirectory.resolve("missing")
+
+        fun writeAction(image: String) {
+            Files.writeString(
+                actionPath,
+                """
+                name: Local Docker fixture
+                description: Verifies tracked file modes
+                runs:
+                  using: docker
+                  image: $image
+                """.trimIndent() + "\n",
+            )
+        }
+
+        try {
+            Files.createDirectories(actionDirectory)
+            runGit(repository, "init", "--quiet")
+            runGit(repository, "config", "user.name", "Alitycs CI")
+            runGit(repository, "config", "user.email", "ci@alitycs.com")
+            runGit(repository, "config", "commit.gpgSign", "false")
+            runGit(repository, "config", "core.hooksPath", ".git/no-hooks")
+
+            writeAction("Dockerfile")
+            Files.writeString(dockerfilePath, "FROM scratch\n")
+            runGit(repository, "add", ".")
+            runGit(
+                repository,
+                "commit",
+                "--no-gpg-sign",
+                "--quiet",
+                "-m",
+                "Add regular Dockerfile",
+            )
+            val regularHead = runGit(repository, "rev-parse", "HEAD")
+
+            val regularWorktree = runPinVerifier(workingDirectory = repository)
+            assertEquals(0, regularWorktree.exitCode, regularWorktree.stderr)
+            assertTrue(regularWorktree.stdout.contains("1 local"))
+            val regularCommit =
+                runPinVerifier(workingDirectory = repository, gitRef = regularHead)
+            assertEquals(0, regularCommit.exitCode, regularCommit.stderr)
+
+            Files.delete(dockerfilePath)
+            Files.writeString(targetPath, "FROM scratch\n")
+            Files.createSymbolicLink(dockerfilePath, Path.of("real.Dockerfile"))
+            val replacedByWorktreeSymlink = runPinVerifier(workingDirectory = repository)
+            assertEquals(1, replacedByWorktreeSymlink.exitCode)
+            assertTrue(
+                replacedByWorktreeSymlink.stderr.contains(
+                    "does not resolve to a regular tracked Dockerfile",
+                ),
+            )
+            val unchangedCommit =
+                runPinVerifier(workingDirectory = repository, gitRef = regularHead)
+            assertEquals(0, unchangedCommit.exitCode, unchangedCommit.stderr)
+
+            Files.delete(dockerfilePath)
+            Files.delete(targetPath)
+            Files.writeString(dockerfilePath, "FROM scratch\n")
+            writeAction("missing/Dockerfile")
+            Files.createDirectory(missingDirectory)
+            Files.writeString(missingDirectory.resolve("Dockerfile"), "FROM scratch\n")
+            runGit(repository, "add", "fixture/action.yml")
+            runGit(
+                repository,
+                "commit",
+                "--no-gpg-sign",
+                "--quiet",
+                "-m",
+                "Reference untracked Dockerfile",
+            )
+            val missingHead = runGit(repository, "rev-parse", "HEAD")
+
+            listOf(
+                runPinVerifier(workingDirectory = repository),
+                runPinVerifier(workingDirectory = repository, gitRef = missingHead),
+            ).forEach { result ->
+                assertEquals(1, result.exitCode)
+                assertTrue(
+                    result.stderr.contains("does not resolve to a regular tracked Dockerfile"),
+                )
+            }
+
+            deleteRecursively(missingDirectory)
+            writeAction("Dockerfile")
+            Files.delete(dockerfilePath)
+            Files.writeString(targetPath, "FROM scratch\n")
+            Files.createSymbolicLink(dockerfilePath, Path.of("real.Dockerfile"))
+            runGit(repository, "add", "--all")
+            runGit(
+                repository,
+                "commit",
+                "--no-gpg-sign",
+                "--quiet",
+                "-m",
+                "Add Dockerfile symlink",
+            )
+            val symlinkHead = runGit(repository, "rev-parse", "HEAD")
+
+            listOf(
+                runPinVerifier(workingDirectory = repository),
+                runPinVerifier(workingDirectory = repository, gitRef = symlinkHead),
+            ).forEach { result ->
+                assertEquals(1, result.exitCode)
+                assertTrue(
+                    result.stderr.contains("does not resolve to a regular tracked Dockerfile"),
+                )
+            }
+        } finally {
+            deleteRecursively(repository)
+        }
+    }
+
+    @Test
     fun `repository audit reads the synchronized commit and exact app allowlists`() {
         val audit = read("scripts/audit-coderabbit-github.sh")
         val docs = read("docs/coderabbit.md")
@@ -639,16 +789,86 @@ class CodeRabbitGatePolicyTest {
     private fun runPinVerifier(
         input: String? = null,
         label: String = "fixture.yml",
+        workingDirectory: Path = repositoryRoot,
+        gitRef: String? = null,
     ): VerifierResult {
-        val command = mutableListOf("ruby", "scripts/verify-workflow-pins.rb")
+        val command =
+            mutableListOf(
+                "ruby",
+                repositoryRoot.resolve("scripts/verify-workflow-pins.rb").toAbsolutePath().toString(),
+            )
         if (input != null) command.addAll(listOf("--stdin", label))
-        val process = ProcessBuilder(command).directory(repositoryRoot.toFile()).start()
-        process.outputStream.bufferedWriter().use { writer ->
-            if (input != null) writer.write(input)
+        else if (gitRef != null) command.addAll(listOf("--git-ref", gitRef))
+        val stdoutFile = Files.createTempFile("alitycs-pin-verifier-", ".stdout")
+        val stderrFile = Files.createTempFile("alitycs-pin-verifier-", ".stderr")
+        var process: Process? = null
+        try {
+            val startedProcess =
+                ProcessBuilder(command)
+                    .directory(workingDirectory.toFile())
+                    .redirectOutput(stdoutFile.toFile())
+                    .redirectError(stderrFile.toFile())
+                    .start()
+            process = startedProcess
+            startedProcess.outputStream.bufferedWriter().use { writer ->
+                if (input != null) writer.write(input)
+            }
+            val exitCode = waitFor(startedProcess, "workflow pin verifier")
+            return VerifierResult(
+                exitCode,
+                Files.readString(stdoutFile),
+                Files.readString(stderrFile),
+            )
+        } finally {
+            process?.takeIf { it.isAlive }?.destroyForcibly()
+            Files.deleteIfExists(stdoutFile)
+            Files.deleteIfExists(stderrFile)
         }
-        val stdout = process.inputStream.bufferedReader().readText()
-        val stderr = process.errorStream.bufferedReader().readText()
-        return VerifierResult(process.waitFor(), stdout, stderr)
+    }
+
+    private fun runGit(directory: Path, vararg arguments: String): String {
+        val outputFile = Files.createTempFile("alitycs-git-fixture-", ".log")
+        var process: Process? = null
+        try {
+            val builder =
+                ProcessBuilder(listOf("git") + arguments)
+                    .directory(directory.toFile())
+                    .redirectErrorStream(true)
+                    .redirectOutput(outputFile.toFile())
+            builder.environment()["GIT_CONFIG_GLOBAL"] =
+                directory.resolve(".gitconfig-isolated").toAbsolutePath().toString()
+            builder.environment()["GIT_CONFIG_NOSYSTEM"] = "1"
+            val startedProcess = builder.start()
+            process = startedProcess
+            val exitCode = waitFor(startedProcess, "git ${arguments.joinToString(" ")}")
+            val output = Files.readString(outputFile)
+            check(exitCode == 0) { "git ${arguments.joinToString(" ")} failed: $output" }
+            return output.trim()
+        } finally {
+            process?.takeIf { it.isAlive }?.destroyForcibly()
+            Files.deleteIfExists(outputFile)
+        }
+    }
+
+    private fun waitFor(process: Process, description: String): Int {
+        try {
+            if (!process.waitFor(30, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(5, TimeUnit.SECONDS)
+                error("$description timed out")
+            }
+            return process.exitValue()
+        } catch (error: InterruptedException) {
+            process.destroyForcibly()
+            Thread.currentThread().interrupt()
+            throw error
+        }
+    }
+
+    private fun deleteRecursively(path: Path) {
+        Files.walk(path).use { paths ->
+            paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+        }
     }
 
     private fun read(relativePath: String): String =

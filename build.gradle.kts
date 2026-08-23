@@ -1,4 +1,5 @@
 import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 
 plugins {
@@ -47,7 +48,23 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    systemProperty("alitycs.repositoryRoot", layout.projectDirectory.asFile.absolutePath)
+    workingDir(layout.projectDirectory)
+    systemProperty("alitycs.repositoryRoot", ".")
+    inputs.files(
+        ".coderabbit.yaml",
+        "build.gradle.kts",
+        "CONTRIBUTING.md",
+        "README.md",
+        fileTree(".github") {
+            include("**/*.yml", "**/*.yaml", "PULL_REQUEST_TEMPLATE.md")
+        },
+        fileTree("docs") { include("**/*.md") },
+        fileTree("scripts") { include("**/*") },
+        fileTree(".") {
+            include("**/action.yml", "**/action.yaml", "**/Dockerfile")
+            exclude(".git/**", "build/**")
+        },
+    ).withPathSensitivity(PathSensitivity.RELATIVE)
     testLogging {
         events("passed", "skipped", "failed")
     }
