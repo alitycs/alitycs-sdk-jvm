@@ -60,6 +60,8 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("current.data.external_id === externalId"))
         assertTrue(workflow.contains("currentPullRequest.head.sha !== headSha"))
         assertTrue(workflow.contains("currentMainSha !== baseSha"))
+        assertTrue(workflow.contains("finalMainSha !== baseSha"))
+        assertEquals(3, Regex("await github.rest.git.getRef").findAll(workflow).count())
         assertFalse(workflow.contains("currentPullRequest.base.sha !== baseSha"))
         assertTrue(workflow.contains("github.rest.pulls.list"))
         assertTrue(workflow.contains("sameHeadPullRequests.length !== 1"))
@@ -266,6 +268,14 @@ class CodeRabbitGatePolicyTest {
         assertTrue(audit.contains("(.events | sort) == (["))
         assertTrue(audit.contains("first(.[] | .installations[] | select("))
         assertFalse(audit.contains("head -n 1"))
+        assertTrue(audit.contains("fail \"could not read the gate App ID\""))
+        listOf(
+            "\$gate_client_id_variable",
+            "\$gate_app_id_variable",
+            "\$gate_canary_sha_variable",
+        ).forEach { variable ->
+            assertTrue(audit.contains("fail \"$variable is missing from the repository\""))
+        }
         assertTrue(
             audit.contains(
                 "readonly gate_canary_sha_variable=\"ALITYCS_CODERABBIT_GATE_CANARY_SHA\"",
