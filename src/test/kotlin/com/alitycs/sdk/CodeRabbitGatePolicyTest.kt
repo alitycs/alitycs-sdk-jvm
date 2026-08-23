@@ -826,6 +826,171 @@ class CodeRabbitGatePolicyTest {
         assertTrue(audit.contains("the recorded Gate App canary is missing, stale"))
     }
 
+    @Test
+    fun `repository audit validates live shaped immutable tag rulesets`() {
+        val canonicalList =
+            """
+            [[{"id":42,"name":"Immutable release tags"}]]
+            """.trimIndent()
+        val canonicalDetail =
+            """
+            {
+              "id": 42,
+              "name": "Immutable release tags",
+              "target": "tag",
+              "source_type": "Repository",
+              "source": "alitycs/alitycs-sdk-jvm",
+              "enforcement": "active",
+              "conditions": {
+                "ref_name": {"exclude": [], "include": ["refs/tags/v*"]}
+              },
+              "rules": [{"type": "update"}, {"type": "deletion"}],
+              "bypass_actors": [],
+              "current_user_can_bypass": "never"
+            }
+            """.trimIndent()
+
+        val valid = runRulesetAuditFixture(canonicalList, canonicalDetail)
+        assertEquals(1, valid.exitCode)
+        assertTrue(valid.stderr.contains("alitycs-coderabbit-gate is not installed for alitycs"))
+        assertFalse(valid.stderr.contains("Immutable release tags must actively prevent"))
+
+        val invalidFixtures =
+            listOf(
+                "configured bypass actor" to
+                    canonicalDetail.replace(
+                        "\"bypass_actors\": []",
+                        "\"bypass_actors\": [{\"actor_id\": 1}]",
+                    ),
+                "effective current-user bypass" to
+                    canonicalDetail.replace(
+                        "\"current_user_can_bypass\": \"never\"",
+                        "\"current_user_can_bypass\": \"always\"",
+                    ),
+                "non-active enforcement" to
+                    canonicalDetail.replace(
+                        "\"enforcement\": \"active\"",
+                        "\"enforcement\": \"evaluate\"",
+                    ),
+                "wrong include" to
+                    canonicalDetail.replace("refs/tags/v*", "refs/tags/release-*"),
+                "non-empty exclude" to
+                    canonicalDetail.replace(
+                        "\"exclude\": []",
+                        "\"exclude\": [\"refs/tags/v0.*\"]",
+                    ),
+                "missing update rule" to
+                    canonicalDetail.replace(
+                        "[{\"type\": \"update\"}, {\"type\": \"deletion\"}]",
+                        "[{\"type\": \"deletion\"}]",
+                    ),
+                "extra creation rule" to
+                    canonicalDetail.replace(
+                        "[{\"type\": \"update\"}, {\"type\": \"deletion\"}]",
+                        "[{\"type\": \"update\"}, {\"type\": \"deletion\"}, " +
+                            "{\"type\": \"creation\"}]",
+                    ),
+            )
+        invalidFixtures.forEach { (label, detail) ->
+            val result = runRulesetAuditFixture(canonicalList, detail)
+            assertEquals(1, result.exitCode, label)
+            assertTrue(
+                result.stderr.contains(
+                    "Immutable release tags must actively prevent v* tag updates and deletion " +
+                        "without bypasses",
+                ),
+                label,
+            )
+        }
+
+        val duplicateAcrossPages =
+            """
+            [
+              [{"id":42,"name":"Immutable release tags"}],
+              [{"id":43,"name":"Immutable release tags"}]
+            ]
+            """.trimIndent()
+        val duplicate = runRulesetAuditFixture(duplicateAcrossPages, canonicalDetail)
+        assertEquals(1, duplicate.exitCode)
+        assertTrue(
+            duplicate.stderr.contains(
+                "must have exactly one Immutable release tags repository ruleset",
+            ),
+        )
+    }
+
+    private fun runRulesetAuditFixture(rulesetList: String, rulesetDetail: String): VerifierResult {
+        val fixtureDirectory = Files.createTempDirectory("alitycs-ruleset-audit-")
+        val stdoutFile = Files.createTempFile("alitycs-ruleset-audit-", ".stdout")
+        val stderrFile = Files.createTempFile("alitycs-ruleset-audit-", ".stderr")
+        var process: Process? = null
+        try {
+            Files.writeString(fixtureDirectory.resolve("rulesets.json"), rulesetList)
+            Files.writeString(fixtureDirectory.resolve("ruleset.json"), rulesetDetail)
+            val ghStub = fixtureDirectory.resolve("gh")
+            Files.writeString(
+                ghStub,
+                """
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                request=""
+                for argument in "${'$'}@"; do
+                  request="${'$'}argument"
+                done
+                case "${'$'}request" in
+                  "repos/alitycs/alitycs-sdk-jvm")
+                    printf '%s\n' '{"private":false,"default_branch":"main"}'
+                    ;;
+                  "repos/alitycs/alitycs-sdk-jvm/rulesets?includes_parents=false&targets=tag&per_page=100")
+                    cat "${'$'}AUDIT_FIXTURE_DIRECTORY/rulesets.json"
+                    ;;
+                  "repos/alitycs/alitycs-sdk-jvm/rulesets/42")
+                    cat "${'$'}AUDIT_FIXTURE_DIRECTORY/ruleset.json"
+                    ;;
+                  "orgs/alitycs/installations?per_page=100")
+                    printf '%s\n' '[{"installations":[]}]'
+                    ;;
+                  *)
+                    printf 'unexpected gh request: %s\n' "${'$'}request" >&2
+                    exit 97
+                    ;;
+                esac
+                """.trimIndent() + "\n",
+            )
+            check(ghStub.toFile().setExecutable(true, true)) { "could not make gh stub executable" }
+
+            val builder =
+                ProcessBuilder(
+                    "bash",
+                    repositoryRoot
+                        .resolve("scripts/audit-coderabbit-github.sh")
+                        .toAbsolutePath()
+                        .toString(),
+                    "alitycs/alitycs-sdk-jvm",
+                )
+                    .directory(repositoryRoot.toFile())
+                    .redirectOutput(stdoutFile.toFile())
+                    .redirectError(stderrFile.toFile())
+            builder.environment()["AUDIT_FIXTURE_DIRECTORY"] = fixtureDirectory.toString()
+            builder.environment()["PATH"] =
+                "${fixtureDirectory}:${requireNotNull(System.getenv("PATH"))}"
+            val startedProcess = builder.start()
+            process = startedProcess
+            val exitCode = waitFor(startedProcess, "CodeRabbit repository audit fixture")
+            return VerifierResult(
+                exitCode,
+                Files.readString(stdoutFile),
+                Files.readString(stderrFile),
+            )
+        } finally {
+            process?.takeIf { it.isAlive }?.destroyForcibly()
+            Files.deleteIfExists(stdoutFile)
+            Files.deleteIfExists(stderrFile)
+            deleteRecursively(fixtureDirectory)
+        }
+    }
+
     private fun runPinVerifier(
         input: String? = null,
         label: String = "fixture.yml",
