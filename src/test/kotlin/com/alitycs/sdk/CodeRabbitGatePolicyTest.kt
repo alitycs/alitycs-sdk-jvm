@@ -847,10 +847,14 @@ class CodeRabbitGatePolicyTest {
     fun `repository audit reads the synchronized commit and exact app allowlists`() {
         val audit = read("scripts/audit-coderabbit-github.sh")
         val docs = read("docs/coderabbit.md")
+        val futureSdkSeedFiles =
+            docs.substringAfter("2. Add a complete, standalone")
+                .substringBefore("\n3. Create the `coderabbit-gate` environment")
 
         assertTrue(
             audit.contains("git show \"\${local_head}:scripts/verify-workflow-pins.rb\""),
         )
+        assertTrue(futureSdkSeedFiles.contains("`scripts/audit-coderabbit-github.sh`"))
         assertTrue(audit.contains("ruby - --git-ref \"\$local_head\""))
         assertTrue(audit.contains("readonly protected_workflow_tree=\".github/workflows\""))
         assertTrue(
