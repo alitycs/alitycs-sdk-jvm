@@ -1,47 +1,146 @@
-inheritance: true
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: >-
+  Be concise, specific, and constructive. Prioritize defects that can affect correctness,
+  security, compatibility, operability, or maintainability. Avoid stylistic comments already
+  enforced by repository tooling and do not repeat the same finding.
+early_access: false
+enable_free_tier: true
 
 reviews:
-  path_filters:
-    - "!build/**"
-    - "!**/build/**"
-    - "!.gradle/**"
-    - "!**/.gradle/**"
-    - "!**/generated/**"
-    - "!**/*.class"
-    - "!**/*.jar"
-  path_instructions:
-    - path: "src/main/kotlin/**/*.kt"
-      instructions: |
-        Review this Kotlin-first SDK for correctness, backwards compatibility, and JDK 11
-        compatibility. Preserve Java interop through @JvmStatic, @JvmOverloads, and the blocking
-        lifecycle wrappers. Pay particular attention to coroutine cancellation, shared mutable
-        state, queue bounds, shutdown/flush behavior, and thread safety.
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  high_level_summary_instructions: >-
+    Summarize behavioral impact, compatibility risk, security implications, and validation.
+  poem: false
+  in_progress_fortune: false
+  review_status: true
+  review_progress: true
+  fail_commit_status: true
+  changed_files_summary: true
+  collapse_walkthrough: false
+  sequence_diagrams: false
+  suggested_labels: false
+  suggested_reviewers: false
+  auto_apply_labels: false
+  auto_assign_reviewers: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  enable_prompt_for_ai_agents: false
 
-        The SDK sends batched JSON to the worker /events endpoint with a publishable API key in
-        Authorization: Bearer. It must not call the analytics read API or expose Tinybird tokens.
-        Organization and workspace identity come from the credential context, not caller-supplied
-        event fields. Preserve event IDs, session and anonymous identity, and the original event
-        timestamp across every retry: serving deduplication is keyed by organization, workspace,
-        timestamp, and event ID. A retry must resend the same serialized event identity.
+  path_instructions:
+    - path: "**/*"
+      instructions: >-
+        Review for correctness, security, backward compatibility, and sufficient focused tests.
+        Flag undocumented user-visible behavior and dependency or workflow changes that weaken
+        reproducibility, least privilege, or supply-chain safety. GitHub Actions must be pinned to
+        immutable commit SHAs. Treat formatting-only preferences as non-blocking when automation
+        already enforces them.
+    - path: "src/main/kotlin/**/*.kt"
+      instructions: >-
+        Preserve the Kotlin-first public API, Java interoperability through @JvmStatic,
+        @JvmOverloads, and blocking lifecycle wrappers, and JDK 11 compatibility. Review coroutine
+        cancellation, shared mutable state, queue bounds, shutdown and flush behavior, and thread
+        safety. The SDK sends batches to worker POST /events with a publishable key and must never
+        call analytics read APIs or expose Tinybird tokens. Preserve event IDs, session and
+        anonymous identity, and the original event timestamp across every retry.
     - path: "src/test/kotlin/**/*.kt"
-      instructions: |
-        Require deterministic coverage for behavior changes. Check wire serialization, retry
+      instructions: >-
+        Require deterministic coverage for behavioral changes. Check wire serialization, retry
         identity and timestamp stability, batching boundaries, queue and lifecycle concurrency,
         error handling, JDK 11 behavior, and both Kotlin and Java-facing APIs. Contract changes
-        should also be represented in the shared SDK conformance suite.
+        must also be represented in the shared SDK conformance suite.
     - path: "*.gradle.kts"
-      instructions: |
+      instructions: >-
         Preserve the JDK 11 target, reproducible artifacts, coverage gates, Java interoperability,
-        and Maven publication metadata. Reject dynamic or snapshot dependency versions. Any
+        and Maven publication metadata. Reject dynamic or snapshot dependency versions. Every
         dependency or plugin change must update and pass Gradle dependency verification metadata.
     - path: "gradle/**"
-      instructions: |
-        Treat Gradle wrapper and dependency-verification changes as supply-chain sensitive. Verify
-        checksums and trusted-key scope, keep wrapper components consistent, and require a clear
-        reason for every added artifact.
+      instructions: >-
+        Treat the Gradle wrapper, lock state, and dependency-verification changes as supply-chain
+        sensitive. Verify checksums and trusted-key scope, keep wrapper components consistent, and
+        require a clear reason for every added artifact, including gradle-wrapper.jar.
+    - path: ".coderabbit.yaml"
+      instructions: >-
+        Block changes that disable automatic review, request-changes behavior, exact-head gating,
+        or the ignored-bot policy. Require live-schema validation for every configuration change.
+    - path: ".github/workflows/coderabbit-gate.yml"
+      instructions: >-
+        This is a protected trust boundary. It must run from pull_request_target without checking
+        out or executing pull-request code, use only the main-restricted coderabbit-gate
+        environment, and publish through the dedicated Alitycs Gate app. Ordinary pull requests
+        must not alter this file.
     - path: ".github/workflows/**"
-      instructions: |
-        Keep GitHub Actions pinned to immutable commit SHAs with least-privilege permissions.
-        Workflows must use the committed Gradle wrapper and dependency verification, avoid exposing
-        secrets to untrusted pull-request code, and retain the existing test, coverage, build, and
-        publication safeguards.
+      instructions: >-
+        Keep permissions least-privileged, actions pinned to full immutable commit SHAs, CI
+        deterministic, and releases gated on the complete verification and package-integrity suite.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    drafts: false
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+
+  pre_merge_checks:
+    override_requested_reviewers_only: true
+    docstrings:
+      mode: off
+    title:
+      mode: warning
+      requirements: Use a concise, imperative title that describes the behavior changed.
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+
+  tools:
+    github-checks:
+      enabled: true
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+    custom: []
+
+  post_merge_actions: []
+
+chat:
+  allow_non_org_members: false
+  art: false
+  auto_reply: true
+
+knowledge_base:
+  opt_out: true
+  web_search:
+    enabled: false
+  automatic_repository_linking: false
+  linked_repositories: []
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+    auto_planning:
+      enabled: false
+      labels: []
+  labeling:
+    labeling_instructions: []
+    auto_apply_labels: false

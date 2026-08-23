@@ -12,13 +12,14 @@ Java interoperability, thread safety, and graceful lifecycle behavior.
 
 ## Local checks
 
-Use JDK 11+ and the committed wrapper:
+Use JDK 11+, the committed wrapper, and Python 3:
 
 ```bash
 ./gradlew test
 ./gradlew koverVerify
 ./gradlew build
 ./gradlew publishToMavenLocal
+./scripts/validate-coderabbit.sh
 ```
 
 Kover enforces 90% line and 85% method coverage. Tests must remain deterministic and must not need
@@ -39,12 +40,14 @@ signing before pushing; commits merged into `main` must carry verified signature
 
 CodeRabbit reviews human-authored pull requests in addition to the required GitHub Actions checks.
 Resolve its blocking findings and wait for CodeRabbit to approve the current pull-request head.
-The required `CodeRabbit Gate` verifies that exact-head approval, so every new push must finish its
-incremental review before the pull request can merge.
+The required `Alitycs CodeRabbit Gate` verifies that exact-head approval, so every new push must
+finish its incremental review before the pull request can merge. The complete standalone policy
+and trusted evaluator live here; see [CodeRabbit review gate](docs/coderabbit.md) for operations.
 
 Supported bot accounts such as Dependabot, Renovate, and GitHub Actions are intentionally excluded
 from CodeRabbit review. Those pull requests still need all required CI checks and approval from a
-human maintainer on the latest commit.
+human maintainer on the latest commit. If approval lands after the evaluator times out, comment
+`/coderabbit-gate` to reconcile it.
 
 Administrative break-glass changes to review protections are reserved for service outages or urgent
 security response. Record the reason in the pull request, restore the normal gate immediately, and

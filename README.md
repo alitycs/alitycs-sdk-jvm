@@ -139,6 +139,7 @@ a GitHub Release with reproducible, attested artifacts and SHA-256 checksums. Se
 ## Community and security
 
 - [Contributing](CONTRIBUTING.md)
+- [CodeRabbit review gate](docs/coderabbit.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security policy](SECURITY.md)
 - [Support](SUPPORT.md)

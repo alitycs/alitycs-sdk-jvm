@@ -21,4 +21,7 @@ Describe the user-visible change and why it is needed.
 - [ ] All blocking CodeRabbit findings are resolved (human-authored pull requests).
 - [ ] CodeRabbit approved the latest commit, or this is a supported bot pull request with human
       maintainer approval.
+- [ ] `Alitycs CodeRabbit Gate` passed for the latest pushed commit.
 - [ ] Any administrative break-glass use is explained and linked to a follow-up issue.
+
+See [`docs/coderabbit.md`](../docs/coderabbit.md) for gate operations and upgrade procedures.
