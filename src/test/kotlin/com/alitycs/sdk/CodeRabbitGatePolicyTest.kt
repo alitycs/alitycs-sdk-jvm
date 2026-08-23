@@ -176,6 +176,11 @@ class CodeRabbitGatePolicyTest {
         assertTrue(policy.contains("request_changes_workflow: true"))
         assertTrue(policy.contains("fail_commit_status: true"))
         assertTrue(policy.contains("auto_incremental_review: true"))
+        assertTrue(
+            Regex("Initial SDK\\s+bootstrap follows the documented seed procedure").containsMatchIn(
+                policy,
+            ),
+        )
         assertTrue(policy.contains("- \"dependabot[bot]\""))
         assertTrue(policy.contains("- \"renovate[bot]\""))
         assertTrue(policy.contains("- \"github-actions[bot]\""))
@@ -225,12 +230,24 @@ class CodeRabbitGatePolicyTest {
             ),
         )
         assertTrue(workflow.contains("./scripts/verify-workflow-pins.rb"))
+        assertTrue(Regex("actions/setup-python@[0-9a-f]{40}").containsMatchIn(workflow))
+        assertTrue(workflow.contains("python-version: \"3.14.7\""))
         assertTrue(Regex("ruby/setup-ruby@[0-9a-f]{40}").containsMatchIn(workflow))
         assertTrue(workflow.contains("ruby-version: \"3.3.12\""))
         assertTrue(validator.contains("--require-hashes"))
         assertTrue(validator.contains("coderabbit-schema.v2.json"))
         assertFalse(validator.contains("command -v check-jsonschema"))
         assertFalse(validator.contains("https://coderabbit.ai"))
+        assertTrue(validator.contains("readonly python_bin=\"\${PYTHON_BIN:-python3}\""))
+        assertTrue(
+            validator.contains("not (3, 11) <= sys.version_info[:2] <= (3, 14)"),
+        )
+        assertTrue(validator.contains("requires CPython 3.11 through 3.14"))
+        assertFalse(
+            Regex("readonly (?:script_dir|repository_root)=\"\\${'$'}\\(").containsMatchIn(
+                validator,
+            ),
+        )
         assertTrue(requirements.contains("check-jsonschema==0.37.4"))
         assertTrue(requirements.contains("--hash=sha256:"))
         assertTrue(
@@ -271,6 +288,7 @@ class CodeRabbitGatePolicyTest {
         assertTrue(workflow.contains("persist-credentials: false"))
         assertTrue(workflow.contains("https://coderabbit.ai/integrations/schema.v2.json"))
         assertTrue(workflow.contains("cmp --silent \"${'$'}pinned_schema\" \"${'$'}live_schema\""))
+        assertFalse(Regex("readonly [a-z_]+=\"\\${'$'}\\(").containsMatchIn(workflow))
         assertTrue(docs.contains("deliberately not a required merge check"))
         assertTrue(policy.contains("keep the scheduled live-schema drift check non-gating"))
     }
@@ -472,6 +490,11 @@ class CodeRabbitGatePolicyTest {
             ),
         )
         assertTrue(audit.contains("must select every active public SDK"))
+        assertTrue(audit.contains("gh api \"repos/\$repository_name\""))
+        assertTrue(audit.contains("def active_public_sdk:"))
+        assertTrue(audit.contains("((.archived // false) == false)"))
+        assertTrue(audit.contains("((.disabled // false) == false)"))
+        assertFalse(audit.contains("(.default_branch // \"main\")"))
         val sdkRepositoryPattern = Regex("^alitycs-sdk-[a-z0-9]+(?:-[a-z0-9]+)*$")
         listOf("alitycs-sdk-js", "alitycs-sdk-jvm", "alitycs-sdk-react-native").forEach {
             name ->
