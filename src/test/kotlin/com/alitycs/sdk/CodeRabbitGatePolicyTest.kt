@@ -194,6 +194,12 @@ class CodeRabbitGatePolicyTest {
         assertTrue(requirements.contains("check-jsonschema==0.37.4"))
         assertTrue(requirements.contains("--hash=sha256:"))
         assertTrue(
+            requirements.contains("# printf 'check-jsonschema==0.37.4\\n' | uv pip compile"),
+        )
+        assertFalse(
+            requirements.contains("# printf 'check-jsonschema==0.37.4\\\\n' | uv pip compile"),
+        )
+        assertTrue(
             Regex("\\./scripts/validate-coderabbit\\.sh").findAll(docs).count() >= 3,
         )
     }
