@@ -32,7 +32,8 @@ local environment files.
 
 Describe the user-visible effect, Kotlin and Java compatibility impact, and commands you ran. Keep
 the changelog current for consumer-facing changes. By contributing, you agree that your
-contribution is licensed under this repository's MIT License.
+contribution is licensed under this repository's MIT License. Configure GitHub-verified commit
+signing before pushing; commits merged into `main` must carry verified signatures.
 
 ### Automated review
 
