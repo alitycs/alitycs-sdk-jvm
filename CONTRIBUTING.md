@@ -38,8 +38,8 @@ contribution is licensed under this repository's MIT License.
 
 CodeRabbit reviews human-authored pull requests in addition to the required GitHub Actions checks.
 Resolve its blocking findings and wait for CodeRabbit to approve the current pull-request head.
-Every new push dismisses stale approval, so the latest commit must finish its incremental review
-before the pull request can merge.
+The required `CodeRabbit Gate` verifies that exact-head approval, so every new push must finish its
+incremental review before the pull request can merge.
 
 Supported bot accounts such as Dependabot, Renovate, and GitHub Actions are intentionally excluded
 from CodeRabbit review. Those pull requests still need all required CI checks and approval from a
