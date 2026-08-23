@@ -254,6 +254,7 @@ class CodeRabbitGatePolicyTest {
     @Test
     fun `repository audit reads the synchronized commit and exact app allowlists`() {
         val audit = read("scripts/audit-coderabbit-github.sh")
+        val docs = read("docs/coderabbit.md")
 
         assertTrue(
             audit.contains("git show \"\${local_head}:scripts/verify-workflow-pins.rb\""),
@@ -268,6 +269,16 @@ class CodeRabbitGatePolicyTest {
         assertTrue(audit.contains("(.events | sort) == (["))
         assertTrue(audit.contains("first(.[] | .installations[] | select("))
         assertFalse(audit.contains("head -n 1"))
+        assertTrue(
+            audit.contains(
+                "\"user/installations/\$installation_id/repositories?per_page=100\"",
+            ),
+        )
+        assertTrue(audit.contains("must select every active public SDK"))
+        assertTrue(audit.contains("--argjson require_gate \"\$require_gate\""))
+        assertTrue(audit.contains("if [[ \"\${1:-}\" == \"--pre-restore\" ]]"))
+        assertTrue(docs.contains("./scripts/audit-coderabbit-github.sh --pre-restore"))
+        assertTrue(docs.contains("run the same audit again without"))
         assertTrue(audit.contains("fail \"could not read the gate App ID\""))
         listOf(
             "\$gate_client_id_variable",
