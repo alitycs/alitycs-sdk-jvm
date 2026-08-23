@@ -257,6 +257,25 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
+    fun `live schema drift monitor is not a merge gate`() {
+        val workflow = read(".github/workflows/coderabbit-schema-drift.yml")
+        val docs = read("docs/coderabbit.md")
+        val policy = read(".coderabbit.yaml")
+
+        assertTrue(Regex("(?m)^  schedule:${'$'}").containsMatchIn(workflow))
+        assertTrue(Regex("(?m)^  workflow_dispatch:${'$'}").containsMatchIn(workflow))
+        assertFalse(Regex("(?m)^  pull_request(?:_target)?:${'$'}").containsMatchIn(workflow))
+        assertFalse(Regex("(?m)^  push:${'$'}").containsMatchIn(workflow))
+        assertTrue(workflow.contains("permissions:\n  contents: read"))
+        assertTrue(Regex("actions/checkout@[0-9a-f]{40}").containsMatchIn(workflow))
+        assertTrue(workflow.contains("persist-credentials: false"))
+        assertTrue(workflow.contains("https://coderabbit.ai/integrations/schema.v2.json"))
+        assertTrue(workflow.contains("cmp --silent \"${'$'}pinned_schema\" \"${'$'}live_schema\""))
+        assertTrue(docs.contains("deliberately not a required merge check"))
+        assertTrue(policy.contains("keep the scheduled live-schema drift check non-gating"))
+    }
+
+    @Test
     fun `workflow action verifier structurally rejects mutable references`() {
         val current = runPinVerifier()
         assertEquals(0, current.exitCode, current.stderr)

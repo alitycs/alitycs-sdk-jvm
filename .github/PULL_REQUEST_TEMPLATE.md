@@ -24,4 +24,6 @@ Describe the user-visible change and why it is needed.
 - [ ] `Alitycs CodeRabbit Gate` passed for the latest pushed commit.
 - [ ] Any administrative break-glass use is explained and linked to a follow-up issue.
 
-See [`docs/coderabbit.md`](../docs/coderabbit.md) for gate operations and upgrade procedures.
+See the
+[CodeRabbit gate operations guide](https://github.com/alitycs/alitycs-sdk-jvm/blob/main/docs/coderabbit.md)
+for gate operations and upgrade procedures.
