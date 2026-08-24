@@ -16,14 +16,12 @@ Describe the user-visible change and why it is needed.
 - [ ] `./gradlew build`
 - [ ] `./gradlew publishToMavenLocal`
 
-## Review gate
+## Automated review
 
-- [ ] All blocking CodeRabbit findings are resolved (human-authored pull requests).
-- [ ] CodeRabbit approved the latest commit, or this is a supported bot pull request with human
-      maintainer approval.
-- [ ] `Alitycs CodeRabbit Gate` passed for the latest pushed commit.
-- [ ] Any administrative break-glass use is explained and linked to a follow-up issue.
+- [ ] The native `CodeRabbit` status passed for the latest push (review completion, not approval).
+- [ ] All blocking CodeRabbit findings are resolved and its formal review state was checked.
+- [ ] Governance changes have the required code-owner approval.
 
 See the
-[CodeRabbit gate operations guide](https://github.com/alitycs/alitycs-sdk-jvm/blob/main/docs/coderabbit.md)
-for gate operations and upgrade procedures.
+[CodeRabbit review policy](https://github.com/alitycs/alitycs-sdk-jvm/blob/main/docs/coderabbit.md)
+for review behavior, validation, and branch protection.

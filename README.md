@@ -117,8 +117,8 @@ application termination so queued events are sent.
 
 ## Development
 
-Requirements: JDK 11+, the committed Gradle wrapper, Bash, Git, jq, Ruby 3.3 or newer, and
-CPython 3.11 through 3.14.
+Requirements: JDK 11+, the committed Gradle wrapper, Bash, Git, Ruby 3.3 or newer, and CPython 3.11
+through 3.14.
 
 ```bash
 ./gradlew test
@@ -142,7 +142,7 @@ are `v1.1.0` and `v1.1.0-rc.1`.
 ## Community and security
 
 - [Contributing](CONTRIBUTING.md)
-- [CodeRabbit review gate](docs/coderabbit.md)
+- [CodeRabbit reviews](docs/coderabbit.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security policy](SECURITY.md)
 - [Support](SUPPORT.md)

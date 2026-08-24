@@ -12,8 +12,7 @@ Java interoperability, thread safety, and graceful lifecycle behavior.
 
 ## Local checks
 
-Use JDK 11+, the committed wrapper, Bash, Git, jq, CPython 3.11 through 3.14, and Ruby 3.3
-or newer:
+Use JDK 11+, the committed wrapper, Bash, Git, CPython 3.11 through 3.14, and Ruby 3.3 or newer:
 
 ```bash
 ./gradlew test
@@ -41,17 +40,13 @@ baseline.
 
 ### Automated review
 
-CodeRabbit reviews human-authored pull requests in addition to the required GitHub Actions checks.
-Resolve its blocking findings and wait for CodeRabbit to approve the current pull-request head.
-The required `Alitycs CodeRabbit Gate` verifies that exact-head approval, so every new push must
-finish its incremental review before the pull request can merge. The complete standalone policy
-and trusted evaluator live here; see [CodeRabbit review gate](docs/coderabbit.md) for operations.
+CodeRabbit automatically reviews ready pull requests, including dependency-bot updates, in addition
+to the required GitHub Actions checks. Resolve blocking findings and wait for incremental review to
+finish after every push. The native `CodeRabbit` status reports that review processing completed; it
+does not by itself mean that CodeRabbit approved the pull request. Check the formal review state for
+approval or requested changes.
 
-Supported bot accounts such as Dependabot, Renovate, and GitHub Actions are intentionally excluded
-from CodeRabbit review. Those pull requests still need all required CI checks and approval from a
-human maintainer on the latest commit. Review submissions and dismissals automatically reconcile
-the gate; comment `/coderabbit-gate` only to recover from a missed GitHub event.
-
-Administrative break-glass changes to review protections are reserved for service outages or urgent
-security response. Record the reason in the pull request, restore the normal gate immediately, and
-link a follow-up issue for any deferred review or remediation.
+Normal GitHub review protection remains authoritative and an eligible human approval can satisfy
+it. Changes to `.coderabbit.yaml`, `.github/workflows/`, CODEOWNERS, or their validation scripts
+also require code-owner approval. See [CodeRabbit reviews](docs/coderabbit.md) for the
+repository-owned policy, validation commands, and branch-protection baseline.

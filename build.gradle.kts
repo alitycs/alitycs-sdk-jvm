@@ -56,7 +56,7 @@ tasks.test {
         "CONTRIBUTING.md",
         "README.md",
         fileTree(".github") {
-            include("**/*.yml", "**/*.yaml", "PULL_REQUEST_TEMPLATE.md")
+            include("**/*.yml", "**/*.yaml", "PULL_REQUEST_TEMPLATE.md", "CODEOWNERS")
         },
         fileTree("docs") { include("**/*.md") },
         fileTree("scripts") { include("**/*") },
