@@ -1323,6 +1323,40 @@ class CodeRabbitGatePolicyTest {
     }
 
     @Test
+    fun `commit signatures are optional in the required branch baseline`() {
+        val audit = read("scripts/audit-coderabbit-github.sh")
+        val contributing = read("CONTRIBUTING.md")
+        val docs = read("docs/coderabbit.md")
+
+        assertFalse(audit.contains("required_signatures"))
+        assertFalse(audit.contains("signature_policy"))
+        assertTrue(
+            contributing.contains(
+                "commit signatures are optional and are not part of the required branch",
+            ),
+        )
+        assertTrue(
+            Regex(
+                "Commit\\s+signing is optional and is not part of the required branch baseline\\.",
+            ).containsMatchIn(docs),
+        )
+        assertFalse(docs.contains("signed commits, linear history"))
+
+        listOf(
+            ".enforce_admins.enabled == true",
+            ".required_pull_request_reviews.dismiss_stale_reviews == true",
+            ".required_pull_request_reviews.require_last_push_approval == true",
+            ".required_pull_request_reviews.required_approving_review_count == 1",
+            ".required_conversation_resolution.enabled == true",
+            ".required_linear_history.enabled == true",
+            ".allow_force_pushes.enabled == false",
+            ".allow_deletions.enabled == false",
+        ).forEach { requiredControl ->
+            assertTrue(audit.contains(requiredControl), requiredControl)
+        }
+    }
+
+    @Test
     fun `repository audit validates live shaped immutable tag rulesets`() {
         val canonicalList =
             """

@@ -36,7 +36,8 @@ local environment files.
 Describe the user-visible effect, Kotlin and Java compatibility impact, and commands you ran. Keep
 the changelog current for consumer-facing changes. By contributing, you agree that your
 contribution is licensed under this repository's MIT License. Configure GitHub-verified commit
-signing before pushing; commits merged into `main` must carry verified signatures.
+signing if desired; commit signatures are optional and are not part of the required branch
+baseline.
 
 ### Automated review
 
