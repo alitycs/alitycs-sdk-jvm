@@ -69,11 +69,13 @@ reviews:
         require a clear reason for every added artifact, including gradle-wrapper.jar.
     - path: ".coderabbit.yaml"
       instructions: >-
-        Block changes that disable automatic review, request-changes behavior, or the failing
-        commit status. Do not add bot exclusions: dependency-update pull requests must receive the
-        native CodeRabbit status too. Require pinned-schema validation for every configuration
-        change and keep the scheduled live-schema drift check non-gating. This file is protected by
-        CODEOWNERS and must remain self-contained in this repository.
+        Block changes that disable automatic or incremental review, request-changes behavior,
+        review progress, fail-closed review errors, or latest pull-request head coverage by the
+        native CodeRabbit status. Do not add bot exclusions: dependency-update pull requests must
+        receive the native status too. Require pinned-schema validation for every configuration
+        change and keep the scheduled live-schema drift check non-gating. CODEOWNER approval is the
+        trust boundary for changes to this repository-owned policy; do not reintroduce a custom gate
+        application or reconciliation workflow.
     - path: ".github/CODEOWNERS"
       instructions: >-
         Keep CodeRabbit policy, workflow automation, validation scripts, and this ownership file

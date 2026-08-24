@@ -28,6 +28,9 @@ class CodeRabbitNativePolicyTest {
         }
 
         assertFalse(policy.contains("ignore_usernames:"))
+        assertTrue(policy.contains("latest pull-request head coverage"))
+        assertTrue(policy.contains("CODEOWNER approval is the"))
+        assertTrue(policy.contains("trust boundary for changes"))
         assertFalse(Files.exists(repositoryRoot.resolve(".github/workflows/coderabbit-gate.yml")))
         assertFalse(
             Files.exists(repositoryRoot.resolve(".github/workflows/coderabbit-review-event.yml")),
