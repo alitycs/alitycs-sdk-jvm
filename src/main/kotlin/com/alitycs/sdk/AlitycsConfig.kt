@@ -9,9 +9,13 @@ data class AlitycsConfig @JvmOverloads constructor(
     val maxRetries: Int = 3,
     val debug: Boolean = false,
     val sessionTimeout: Long = 30 * 60 * 1000L,
-    val batching: Boolean = true
+    val batching: Boolean = true,
+    val connectTimeoutMs: Long = HttpTransport.DEFAULT_CONNECT_TIMEOUT_MS,
+    val requestTimeoutMs: Long = HttpTransport.DEFAULT_REQUEST_TIMEOUT_MS
 ) {
     init {
         require(apiKey.isNotBlank()) { "apiKey is required" }
+        require(connectTimeoutMs > 0) { "connectTimeoutMs must be positive" }
+        require(requestTimeoutMs > 0) { "requestTimeoutMs must be positive" }
     }
 }

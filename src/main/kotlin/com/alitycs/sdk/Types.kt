@@ -24,8 +24,11 @@ data class EventContext(
     val utmSource: String? = null,
     val utmMedium: String? = null,
     val utmCampaign: String? = null,
+    /** Reserved: collected client-side but currently discarded by server-side ingestion. */
     val osName: String? = null,
+    /** Reserved: collected client-side but currently discarded by server-side ingestion. */
     val osVersion: String? = null,
+    /** Reserved: collected client-side but currently discarded by server-side ingestion. */
     val jvmVersion: String? = null
 )
 

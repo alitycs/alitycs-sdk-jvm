@@ -2,6 +2,7 @@ package com.alitycs.sdk
 
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 class Alitycs private constructor(private val config: AlitycsConfig) {
 
@@ -9,7 +10,9 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         endpoint = config.endpoint,
         apiKey = config.apiKey,
         maxRetries = config.maxRetries,
-        debug = config.debug
+        debug = config.debug,
+        connectTimeoutMs = config.connectTimeoutMs,
+        requestTimeoutMs = config.requestTimeoutMs
     )
     private val sessionManager = SessionManager(config.sessionTimeout)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -27,6 +30,10 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     private var userId: String? = null
     private val globalProperties = ConcurrentHashMap<String, Any?>()
     private val inFlight = ConcurrentHashMap.newKeySet<Job>()
+    private val rejectedLocallyCounter = AtomicLong(0)
+
+    /** Events rejected locally at build time for violating ingestion limits. */
+    val rejectedLocally: Long get() = rejectedLocallyCounter.get()
 
     @JvmOverloads
     fun track(eventName: String, properties: Map<String, Any?> = emptyMap()) {
@@ -117,12 +124,23 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     val pending: Int
         get() = batchManager?.pending ?: inFlight.size
 
+    /** True once shutdown() has completed; a shut-down client rejects further events. */
+    val isShutdown: Boolean
+        get() = !scope.isActive
+
     private fun enqueue(
         type: EventType,
         name: String,
         properties: Map<String, Any?>?,
         revenue: RevenuePayload? = null,
     ) {
+        if (!scope.isActive) {
+            // Post-shutdown events are rejected locally like any limit violation:
+            // never queued, never sent — warn + counter instead of a silent swallow.
+            rejectedLocallyCounter.incrementAndGet()
+            System.err.println("[Alitycs] WARN Client is shut down — event '$name' rejected locally")
+            return
+        }
         sessionManager.touch()
         val session = sessionManager.getSession()
 
@@ -131,18 +149,25 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
             if (properties != null) putAll(properties)
         }
 
-        val event = AnalyticsEvent(
-            eventId = "evt_${generateId()}",
-            event = name,
-            eventType = type,
-            userId = userId,
-            anonymousId = session.anonymousId,
-            sessionId = session.id,
-            timestamp = System.currentTimeMillis(),
-            properties = serializeProperties(merged),
-            revenue = revenue,
-            context = collectContext()
-        )
+        val event = try {
+            AnalyticsEvent(
+                eventId = "evt_${generateId()}",
+                event = name,
+                eventType = type,
+                userId = userId,
+                anonymousId = session.anonymousId,
+                sessionId = session.id,
+                timestamp = System.currentTimeMillis(),
+                properties = serializeProperties(merged),
+                revenue = revenue,
+                context = collectContext()
+            ).also { validateEvent(it) }
+        } catch (e: EventRejectedException) {
+            // Rejected locally: never queued, never sent. Warn (not debug-gated) + counter.
+            rejectedLocallyCounter.incrementAndGet()
+            System.err.println("[Alitycs] WARN ${e.message}")
+            return
+        }
 
         if (batchManager != null) {
             batchManager.add(event)
@@ -153,10 +178,18 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
                     sentAt = System.currentTimeMillis(),
                     events = listOf(event)
                 )
-                try {
-                    transport.send(payload)
-                } catch (_: Exception) {
-                    // Best-effort
+                when (val outcome = transport.send(payload)) {
+                    is SendOutcome.Success -> Unit
+                    is SendOutcome.Rejected ->
+                        System.err.println(
+                            "[Alitycs] WARN Server rejected event '${event.eventId}' with " +
+                                "HTTP ${outcome.status} — dropped"
+                        )
+                    is SendOutcome.TransportFailure ->
+                        System.err.println(
+                            "[Alitycs] WARN Transport failure (${outcome.cause?.message ?: "unknown"}) — " +
+                                "event '${event.eventId}' could not be delivered"
+                        )
                 }
             }
             inFlight.add(job)
@@ -173,9 +206,19 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
 
         @JvmStatic
         fun initDefault(config: AlitycsConfig): Alitycs {
-            val instance = init(config)
-            defaultInstance = instance
-            return instance
+            // Shut down any previous default first so its scope/timer are not leaked;
+            // without this, repeated initDefault() calls orphan a live timer per call.
+            val previous = defaultInstance
+            if (previous != null && !previous.isShutdown) {
+                try {
+                    previous.shutdownBlocking()
+                } catch (e: Exception) {
+                    System.err.println(
+                        "[Alitycs] WARN Failed to shut down previous default instance: ${e.message}"
+                    )
+                }
+            }
+            return init(config).also { defaultInstance = it }
         }
 
         @JvmStatic

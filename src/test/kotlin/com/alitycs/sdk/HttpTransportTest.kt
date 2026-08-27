@@ -58,7 +58,7 @@ class HttpTransportTest {
             maxRetries = 3,
             debug = false
         )
-        transport.send(makePayload())
+        assertEquals(SendOutcome.Success, transport.send(makePayload()))
         assertEquals(1, requestCount.get())
     }
 
@@ -86,7 +86,7 @@ class HttpTransportTest {
     }
 
     @Test
-    fun `does not retry on 400`() = runTest {
+    fun `does not retry on 400 and reports a whole-batch rejection`() = runTest {
         val requestCount = AtomicInteger(0)
         server.createContext("/events") { exchange ->
             requestCount.incrementAndGet()
@@ -101,8 +101,29 @@ class HttpTransportTest {
             maxRetries = 3,
             debug = false
         )
-        transport.send(makePayload())
+        val outcome = transport.send(makePayload())
         assertEquals(1, requestCount.get())
+        assertTrue(outcome is SendOutcome.Rejected)
+        assertEquals(400, (outcome as SendOutcome.Rejected).status)
+        assertTrue(outcome.isBatchReject)
+    }
+
+    @Test
+    fun `non-batch 4xx is reported without batch-reject flag`() = runTest {
+        server.createContext("/events") { exchange ->
+            exchange.sendResponseHeaders(401, 0)
+            exchange.close()
+        }
+        server.start()
+
+        val transport = HttpTransport(
+            endpoint = "http://localhost:$port/events",
+            apiKey = "test-key",
+            maxRetries = 3,
+            debug = false
+        )
+        val outcome = transport.send(makePayload())
+        assertEquals(SendOutcome.Rejected(401, false), outcome)
     }
 
     @Test
@@ -154,7 +175,119 @@ class HttpTransportTest {
     }
 
     @Test
-    fun `exhausts retries and does not throw`() = runTest {
+    fun `honours a seconds-valued Retry-After from a 429`() = runTest {
+        val requestCount = AtomicInteger(0)
+        server.createContext("/events") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.responseHeaders.add("Retry-After", "2")
+                exchange.sendResponseHeaders(429, 0)
+            } else {
+                exchange.sendResponseHeaders(200, 0)
+            }
+            exchange.close()
+        }
+        server.start()
+
+        val transport = HttpTransport(
+            endpoint = "http://localhost:$port/events",
+            apiKey = "test-key",
+            maxRetries = 3,
+            debug = false
+        )
+        assertEquals(SendOutcome.Success, transport.send(makePayload()))
+        assertEquals(2, requestCount.get())
+        // Virtual time only advanced through the retry delay: at least Retry-After's
+        // 2s (the default backoff would have been 1s), and far below the 10s cap.
+        assertTrue(testScheduler.currentTime >= 2_000) {
+            "Retry-After: 2 not honoured — waited only ${testScheduler.currentTime}ms"
+        }
+        assertTrue(testScheduler.currentTime <= 2_100)
+    }
+
+    @Test
+    fun `honours an HTTP-date Retry-After from a 429`() = runTest {
+        val requestCount = AtomicInteger(0)
+        server.createContext("/events") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.responseHeaders.add(
+                    "Retry-After",
+                    java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
+                        java.time.ZonedDateTime.now().plusSeconds(3)
+                    )
+                )
+                exchange.sendResponseHeaders(429, 0)
+            } else {
+                exchange.sendResponseHeaders(200, 0)
+            }
+            exchange.close()
+        }
+        server.start()
+
+        val transport = HttpTransport(
+            endpoint = "http://localhost:$port/events",
+            apiKey = "test-key",
+            maxRetries = 3,
+            debug = false
+        )
+        assertEquals(SendOutcome.Success, transport.send(makePayload()))
+        // Wall time elapses between the server formatting the date and the transport
+        // parsing it, so allow generous slop — but stay above the 1s default backoff,
+        // which is what an ignored header would have produced.
+        assertTrue(testScheduler.currentTime >= 1_500) {
+            "HTTP-date Retry-After not honoured — waited only ${testScheduler.currentTime}ms"
+        }
+        assertTrue(testScheduler.currentTime <= 3_100)
+    }
+
+    @Test
+    fun `caps a huge Retry-After at ten seconds`() = runTest {
+        val requestCount = AtomicInteger(0)
+        server.createContext("/events") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.responseHeaders.add("Retry-After", "3600")
+                exchange.sendResponseHeaders(429, 0)
+            } else {
+                exchange.sendResponseHeaders(200, 0)
+            }
+            exchange.close()
+        }
+        server.start()
+
+        val transport = HttpTransport(
+            endpoint = "http://localhost:$port/events",
+            apiKey = "test-key",
+            maxRetries = 3,
+            debug = false
+        )
+        assertEquals(SendOutcome.Success, transport.send(makePayload()))
+        assertEquals(10_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `a 429 without Retry-After keeps the default backoff`() = runTest {
+        val requestCount = AtomicInteger(0)
+        server.createContext("/events") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.sendResponseHeaders(429, 0)
+            } else {
+                exchange.sendResponseHeaders(200, 0)
+            }
+            exchange.close()
+        }
+        server.start()
+
+        val transport = HttpTransport(
+            endpoint = "http://localhost:$port/events",
+            apiKey = "test-key",
+            maxRetries = 3,
+            debug = false
+        )
+        assertEquals(SendOutcome.Success, transport.send(makePayload()))
+        assertEquals(1_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `exhausts retries and reports a transport failure`() = runTest {
         val requestCount = AtomicInteger(0)
         server.createContext("/events") { exchange ->
             requestCount.incrementAndGet()
@@ -169,8 +302,57 @@ class HttpTransportTest {
             maxRetries = 2,
             debug = false
         )
-        // Should not throw
-        transport.send(makePayload())
+        val outcome = transport.send(makePayload())
+        assertTrue(outcome is SendOutcome.TransportFailure)
         assertEquals(3, requestCount.get()) // initial + 2 retries
+    }
+
+    @Test
+    fun `request timeout aborts a slow response`() = runTest {
+        server.createContext("/events") { exchange ->
+            Thread.sleep(5_000)
+            exchange.sendResponseHeaders(200, 0)
+            exchange.close()
+        }
+        server.start()
+
+        val transport = HttpTransport(
+            endpoint = "http://localhost:$port/events",
+            apiKey = "test-key",
+            maxRetries = 0,
+            debug = false,
+            connectTimeoutMs = 2_000,
+            requestTimeoutMs = 300
+        )
+        val start = System.currentTimeMillis()
+        val outcome = transport.send(makePayload())
+        val elapsed = System.currentTimeMillis() - start
+
+        assertTrue(outcome is SendOutcome.TransportFailure)
+        assertTrue(elapsed < 4_000) { "request timeout not applied — took ${elapsed}ms" }
+    }
+
+    @Test
+    fun `config exposes sensible timeout defaults`() {
+        assertEquals(5_000L, HttpTransport.DEFAULT_CONNECT_TIMEOUT_MS)
+        assertEquals(10_000L, HttpTransport.DEFAULT_REQUEST_TIMEOUT_MS)
+    }
+
+    @Test
+    fun `connect timeout fails fast against an unroutable address`() = runTest {
+        val transport = HttpTransport(
+            endpoint = "http://10.255.255.1:1/events", // non-routable, hangs on connect
+            apiKey = "test-key",
+            maxRetries = 0,
+            debug = false,
+            connectTimeoutMs = 500,
+            requestTimeoutMs = 30_000
+        )
+        val start = System.currentTimeMillis()
+        val outcome = transport.send(makePayload())
+        val elapsed = System.currentTimeMillis() - start
+
+        assertTrue(outcome is SendOutcome.TransportFailure)
+        assertTrue(elapsed < 20_000) { "connect timeout not applied — took ${elapsed}ms" }
     }
 }
