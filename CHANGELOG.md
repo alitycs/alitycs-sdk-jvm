@@ -5,7 +5,13 @@ here before a version tag is created.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-28
+
 ### Added
+- Optional `persistencePath` exact-batch write-ahead logging. A serialized in-flight batch is
+  stored atomically before its first attempt and replayed byte-identically after restart,
+  including any remaining final `Retry-After` deadline. Terminal responses acknowledge the WAL;
+  pre-flush in-memory events remain outside this durability boundary.
 - Configurable HTTP timeouts (`connectTimeoutMs`, default 5s; `requestTimeoutMs`, default 10s) on
   `AlitycsConfig`; previously `HttpTransport` had none and a stalled server could wedge a flush
   indefinitely.
@@ -51,5 +57,6 @@ here before a version tag is created.
   events, bounded batching, retry, and blocking Java lifecycle methods.
 - Added Kover gates at 90% lines and 85% methods.
 
-[Unreleased]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/alitycs/alitycs-sdk-jvm/releases/tag/v1.0.0
