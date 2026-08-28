@@ -9,10 +9,9 @@
    `main` are rejected. The active `Immutable release tags` repository ruleset prevents updates or
    deletion of `refs/tags/v*` without any bypass actor.
 5. The `Release` workflow validates, builds, and generates the Maven POM and checksums in a
-   read-only job. A separate minimal-permission job downloads and attests the reproducible JAR,
-   sources, POM, and checksums, then creates the GitHub Release. Before publication, it fetches the
-   tag again and requires its annotated-tag object and target commit to match the identities
-   recorded by the build job. The workflow intentionally has no Actions concurrency group because
+   read-only job. A separate minimal-permission job downloads the reproducible JAR, sources, POM,
+   and checksums, fetches and rechecks the tag identity, then attests the artifacts and creates the
+   GitHub Release. The workflow intentionally has no Actions concurrency group because
    those names are repository-global and a pull-request-controlled workflow could reserve one to
    block a tag run. Immutable tags, the fresh identity recheck, and immutable tag and version
    publication identities provide duplicate-release safety without that repository-global lock.
