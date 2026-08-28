@@ -4,8 +4,8 @@ import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.api.tasks.bundling.Jar
 
 plugins {
-    kotlin("jvm") version "1.9.24"
-    kotlin("plugin.serialization") version "1.9.24"
+    kotlin("jvm") version "2.1.0"
+    kotlin("plugin.serialization") version "2.1.0"
     id("org.jetbrains.kotlinx.kover") version "0.9.8"
     `maven-publish`
 }
@@ -37,13 +37,13 @@ kotlin.sourceSets.named("test") {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.10.0")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
     testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
 }
