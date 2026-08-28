@@ -26,7 +26,13 @@ sealed class SendOutcome {
     data class Rejected(val status: Int, val isBatchReject: Boolean) : SendOutcome()
 
     /** Transient failure: transport error, timeout, 429/5xx after all retries. */
-    data class TransportFailure(val cause: Exception? = null) : SendOutcome()
+    data class TransportFailure(
+        val cause: Exception? = null,
+        /** Absolute epoch-millisecond deadline supplied by the final 429, if any. */
+        val retryAfterUntilMs: Long? = null,
+        /** True when the exact request body is already owned by the durable WAL. */
+        val retained: Boolean = false,
+    ) : SendOutcome()
 }
 
 class HttpTransport(
@@ -35,7 +41,8 @@ class HttpTransport(
     private val maxRetries: Int,
     private val debug: Boolean,
     private val connectTimeoutMs: Long = DEFAULT_CONNECT_TIMEOUT_MS,
-    private val requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS
+    private val requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
+    persistencePath: String? = null,
 ) {
     private val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofMillis(connectTimeoutMs))
@@ -45,11 +52,34 @@ class HttpTransport(
         encodeDefaults = true
         explicitNulls = false
     }
+    private val durableStore = FileBatchStore(persistencePath)
 
     suspend fun send(payload: BatchPayload): SendOutcome {
         val body = json.encodeToString(BatchPayload.serializer(), payload)
+        val record = DurableBatchRecord(payload.batchId, body, payload.events.size)
+        durableStore.put(record)
+        return sendRecord(record)
+    }
+
+    /** Replays every unacknowledged batch exactly as serialized before the first attempt. */
+    suspend fun recover(): SendOutcome {
+        for (record in durableStore.snapshot()) {
+            val remaining = (record.pausedUntilMs ?: 0L) - System.currentTimeMillis()
+            if (remaining > 0) delay(remaining)
+            val outcome = sendRecord(record)
+            if (outcome is SendOutcome.TransportFailure) return outcome
+        }
+        return SendOutcome.Success
+    }
+
+    val durablePendingEvents: Int get() = durableStore.pendingEvents()
+    val durableEnabled: Boolean get() = durableStore.enabled
+
+    private suspend fun sendRecord(record: DurableBatchRecord): SendOutcome {
+        val body = record.body
         var lastError: Exception? = null
         var retryAfterMs: Long? = null
+        var retryAfterUntilMs: Long? = null
 
         for (attempt in 0..maxRetries) {
             if (attempt > 0) {
@@ -73,10 +103,14 @@ class HttpTransport(
                 val response = client.send(request, HttpResponse.BodyHandlers.ofString())
                 val status = response.statusCode()
 
-                if (status in 200..299) return SendOutcome.Success
+                if (status in 200..299) {
+                    durableStore.acknowledge(record.batchId)
+                    return SendOutcome.Success
+                }
 
                 if (status in 400..499 && status != 429) {
                     warn("$status — not retrying")
+                    durableStore.acknowledge(record.batchId)
                     return SendOutcome.Rejected(
                         status = status,
                         isBatchReject = status == HTTP_BATCH_REJECT_STATUS
@@ -85,6 +119,7 @@ class HttpTransport(
 
                 if (status == 429) {
                     retryAfterMs = response.headers().firstValue("Retry-After").orElse(null)?.let { parseRetryAfterMs(it) }
+                    retryAfterUntilMs = retryAfterMs?.let { System.currentTimeMillis() + it }
                 }
                 lastError = Exception("HTTP $status")
             } catch (e: CancellationException) {
@@ -98,8 +133,9 @@ class HttpTransport(
             }
         }
 
-        warn("all retries exhausted — dropping batch: ${lastError?.message}")
-        return SendOutcome.TransportFailure(lastError)
+        durableStore.pause(record.batchId, retryAfterUntilMs)
+        warn("all retries exhausted — batch retained for restart: ${lastError?.message}")
+        return SendOutcome.TransportFailure(lastError, retryAfterUntilMs, retained = durableStore.enabled)
     }
 
     /**

@@ -12,7 +12,8 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         maxRetries = config.maxRetries,
         debug = config.debug,
         connectTimeoutMs = config.connectTimeoutMs,
-        requestTimeoutMs = config.requestTimeoutMs
+        requestTimeoutMs = config.requestTimeoutMs,
+        persistencePath = config.persistencePath,
     )
     private val sessionManager = SessionManager(config.sessionTimeout)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -22,7 +23,10 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
             flushInterval = config.flushInterval,
             maxQueueSize = config.maxQueueSize,
             debug = config.debug,
-            sendFn = transport::send
+            sendFn = transport::send,
+            recoverFn = transport::recover,
+            durablePendingEvents = { transport.durablePendingEvents },
+            durable = transport.durableEnabled,
         ).also { it.start(scope) }
     } else null
 
@@ -36,21 +40,33 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     val rejectedLocally: Long get() = rejectedLocallyCounter.get()
 
     @JvmOverloads
-    fun track(eventName: String, properties: Map<String, Any?> = emptyMap()) {
+    fun track(
+        eventName: String,
+        properties: Map<String, Any?> = emptyMap(),
+        options: EventOptions = EventOptions(),
+    ) {
         if (eventName.isBlank()) return
-        enqueue(EventType.TRACK, eventName, properties)
+        enqueue(EventType.TRACK, eventName, properties, options = options)
     }
 
     /** Server-only trusted revenue ingestion. Requires a secret key with revenue:write. */
     @JvmOverloads
-    fun trackRevenue(payload: RevenuePayload, properties: Map<String, Any?> = emptyMap()) {
-        enqueue(EventType.TRACK, "revenue_${payload.kind}", properties, payload)
+    fun trackRevenue(
+        payload: RevenuePayload,
+        properties: Map<String, Any?> = emptyMap(),
+        options: EventOptions = EventOptions(),
+    ) {
+        enqueue(EventType.TRACK, "revenue_${payload.kind}", properties, payload, options)
     }
 
     @JvmOverloads
-    fun captureError(errorName: String, properties: Map<String, Any?> = emptyMap()) {
+    fun captureError(
+        errorName: String,
+        properties: Map<String, Any?> = emptyMap(),
+        options: EventOptions = EventOptions(),
+    ) {
         if (errorName.isBlank()) return
-        enqueue(EventType.ERROR, errorName, properties)
+        enqueue(EventType.ERROR, errorName, properties, options = options)
     }
 
     @JvmOverloads
@@ -70,9 +86,13 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     }
 
     @JvmOverloads
-    fun page(name: String? = null, properties: Map<String, Any?> = emptyMap()) {
+    fun page(
+        name: String? = null,
+        properties: Map<String, Any?> = emptyMap(),
+        options: EventOptions = EventOptions(),
+    ) {
         val pageName = if (name.isNullOrBlank()) "page_view" else name
-        enqueue(EventType.PAGE, pageName, properties)
+        enqueue(EventType.PAGE, pageName, properties, options = options)
     }
 
     fun setGlobalProperties(properties: Map<String, Any?>) {
@@ -93,7 +113,9 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         if (batchManager != null) {
             batchManager.flush()
         } else {
+            transport.recover()
             inFlight.toList().forEach { it.join() }
+            transport.recover()
         }
     }
 
@@ -133,6 +155,7 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         name: String,
         properties: Map<String, Any?>?,
         revenue: RevenuePayload? = null,
+        options: EventOptions = EventOptions(),
     ) {
         if (!scope.isActive) {
             // Post-shutdown events are rejected locally like any limit violation:
@@ -154,7 +177,7 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
                 eventId = "evt_${generateId()}",
                 event = name,
                 eventType = type,
-                userId = userId,
+                userId = options.userId ?: userId,
                 anonymousId = session.anonymousId,
                 sessionId = session.id,
                 timestamp = System.currentTimeMillis(),
@@ -223,20 +246,32 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
 
         @JvmStatic
         @JvmName("trackDefault")
-        fun track(eventName: String, properties: Map<String, Any?> = emptyMap()) {
-            defaultInstance?.track(eventName, properties)
+        fun track(
+            eventName: String,
+            properties: Map<String, Any?> = emptyMap(),
+            options: EventOptions = EventOptions(),
+        ) {
+            defaultInstance?.track(eventName, properties, options)
         }
 
         @JvmStatic
         @JvmName("trackRevenueDefault")
-        fun trackRevenue(payload: RevenuePayload, properties: Map<String, Any?> = emptyMap()) {
-            defaultInstance?.trackRevenue(payload, properties)
+        fun trackRevenue(
+            payload: RevenuePayload,
+            properties: Map<String, Any?> = emptyMap(),
+            options: EventOptions = EventOptions(),
+        ) {
+            defaultInstance?.trackRevenue(payload, properties, options)
         }
 
         @JvmStatic
         @JvmName("captureErrorDefault")
-        fun captureError(errorName: String, properties: Map<String, Any?> = emptyMap()) {
-            defaultInstance?.captureError(errorName, properties)
+        fun captureError(
+            errorName: String,
+            properties: Map<String, Any?> = emptyMap(),
+            options: EventOptions = EventOptions(),
+        ) {
+            defaultInstance?.captureError(errorName, properties, options)
         }
 
         @JvmStatic
@@ -252,8 +287,12 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
 
         @JvmStatic
         @JvmName("pageDefault")
-        fun page(name: String? = null, properties: Map<String, Any?> = emptyMap()) {
-            defaultInstance?.page(name, properties)
+        fun page(
+            name: String? = null,
+            properties: Map<String, Any?> = emptyMap(),
+            options: EventOptions = EventOptions(),
+        ) {
+            defaultInstance?.page(name, properties, options)
         }
 
         @JvmStatic

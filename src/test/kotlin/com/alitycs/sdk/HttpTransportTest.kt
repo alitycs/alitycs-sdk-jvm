@@ -5,11 +5,17 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.Assertions.*
 import java.net.InetSocketAddress
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 
 class HttpTransportTest {
+
+    @TempDir
+    lateinit var directory: Path
 
     private lateinit var server: HttpServer
     private var port: Int = 0
@@ -354,5 +360,78 @@ class HttpTransportTest {
 
         assertTrue(outcome is SendOutcome.TransportFailure)
         assertTrue(elapsed < 20_000) { "connect timeout not applied — took ${elapsed}ms" }
+    }
+
+    @Test
+    fun `persisted batch is replayed byte identically after restart`() = runTest {
+        val bodies = mutableListOf<String>()
+        val requestCount = AtomicInteger(0)
+        server.createContext("/events") { exchange ->
+            bodies.add(exchange.requestBody.bufferedReader().readText())
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.sendResponseHeaders(500, 0)
+            } else {
+                exchange.sendResponseHeaders(202, 0)
+            }
+            exchange.close()
+        }
+        server.start()
+        val path = directory.resolve("wal.json")
+        val first = HttpTransport(
+            "http://localhost:$port/events",
+            "test-key",
+            maxRetries = 0,
+            debug = false,
+            persistencePath = path.toString(),
+        )
+        val failure = first.send(makePayload()) as SendOutcome.TransportFailure
+        assertTrue(failure.retained)
+        assertEquals(1, first.durablePendingEvents)
+
+        val restarted = HttpTransport(
+            "http://localhost:$port/events",
+            "test-key",
+            maxRetries = 0,
+            debug = false,
+            persistencePath = path.toString(),
+        )
+        assertEquals(SendOutcome.Success, restarted.recover())
+        assertEquals(bodies[0], bodies[1])
+        assertEquals(0, restarted.durablePendingEvents)
+        assertFalse(Files.exists(path))
+    }
+
+    @Test
+    fun `restart honours persisted Retry-After deadline`() = runTest {
+        val requestCount = AtomicInteger(0)
+        server.createContext("/events") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.responseHeaders.add("Retry-After", "3")
+                exchange.sendResponseHeaders(429, 0)
+            } else {
+                exchange.sendResponseHeaders(202, 0)
+            }
+            exchange.close()
+        }
+        server.start()
+        val path = directory.resolve("wal.json")
+        val first = HttpTransport(
+            "http://localhost:$port/events",
+            "test-key",
+            maxRetries = 0,
+            debug = false,
+            persistencePath = path.toString(),
+        )
+        assertTrue(first.send(makePayload()) is SendOutcome.TransportFailure)
+
+        val restarted = HttpTransport(
+            "http://localhost:$port/events",
+            "test-key",
+            maxRetries = 0,
+            debug = false,
+            persistencePath = path.toString(),
+        )
+        assertEquals(SendOutcome.Success, restarted.recover())
+        assertTrue(testScheduler.currentTime >= 2_500)
     }
 }

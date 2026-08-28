@@ -16,7 +16,10 @@ class BatchManager(
     private val flushInterval: Long,
     private val maxQueueSize: Int,
     private val debug: Boolean,
-    private val sendFn: suspend (BatchPayload) -> SendOutcome
+    private val sendFn: suspend (BatchPayload) -> SendOutcome,
+    private val recoverFn: suspend () -> SendOutcome = { SendOutcome.Success },
+    private val durablePendingEvents: () -> Int = { 0 },
+    private val durable: Boolean = false,
 ) {
     private val queue = ConcurrentLinkedDeque<AnalyticsEvent>()
     private val flushMutex = Mutex()
@@ -70,6 +73,7 @@ class BatchManager(
 
     suspend fun flush() {
         flushMutex.withLock {
+            if (recoverFn() is SendOutcome.TransportFailure) return
             if (queue.isEmpty()) return
 
             val events = mutableListOf<AnalyticsEvent>()
@@ -89,8 +93,12 @@ class BatchManager(
                 deliver(events, depth = 0, delivered = delivered, lost = lost, failed = failed)
             } catch (e: CancellationException) {
                 // Never swallow cancellation — but never drop drained-but-undelivered events either.
-                val undelivered = events.filterNot { e ->
-                    delivered.containsIdentity(e) || lost.containsIdentity(e)
+                val undelivered = if (durable) {
+                    emptyList()
+                } else {
+                    events.filterNot { event ->
+                        delivered.containsIdentity(event) || lost.containsIdentity(event)
+                    }
                 }
                 requeueAtHead(undelivered)
                 throw e
@@ -160,9 +168,13 @@ class BatchManager(
             is SendOutcome.TransportFailure -> {
                 warn(
                     "Transport failure (${outcome.cause?.message ?: "unknown"}) — " +
-                        "re-queueing ${events.size} event(s) at the head of the queue"
+                        if (durable && outcome.retained) {
+                            "exact batch retained for restart"
+                        } else {
+                            "re-queueing ${events.size} event(s) at the head of the queue"
+                        }
                 )
-                failed.addAll(events)
+                if (!durable || !outcome.retained) failed.addAll(events)
             }
         }
     }
@@ -180,7 +192,7 @@ class BatchManager(
         System.err.println("[Alitycs] WARN $message")
     }
 
-    val pending: Int get() = queue.size
+    val pending: Int get() = queue.size + durablePendingEvents()
 
     companion object {
         /** Recursion guard for batch splitting: enough for ~2^32 events, far beyond queue limits. */

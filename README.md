@@ -48,6 +48,21 @@ analytics.captureError("checkout_failed", mapOf("provider" to "stripe"))
 analytics.shutdown()
 ```
 
+For a client shared by concurrent server requests, scope the user to each event instead
+of mutating ambient identity with `identify()`:
+
+```kotlin
+import com.alitycs.sdk.EventOptions
+
+analytics.track(
+    "checkout_started",
+    options = EventOptions(userId = request.userId),
+)
+```
+
+The same third argument is available on `trackRevenue`, `captureError`, and `page` and
+does not change the identity used by any other call.
+
 ## Java quick start
 
 ```java
@@ -96,6 +111,7 @@ Never expose a secret key in a client application.
 | `maxRetries`     | `3`                              | Retry attempts for retryable transport failures                                    |
 | `sessionTimeout` | `1800000`                        | Inactivity timeout in milliseconds                                                 |
 | `batching`       | `true`                           | Send queued batches or one event per request                                       |
+| `persistencePath` | `null`                          | Optional exact in-flight batch WAL path for restart recovery                       |
 | `debug`          | `false`                          | Enable SDK diagnostics                                                             |
 
 Requests use `Authorization: Bearer <apiKey>` and `Content-Type: application/json`. The default
@@ -104,6 +120,7 @@ endpoint is the worker's `/events` ingestion route, not the tenant-scoped analyt
 ## API surface
 
 - `track`, `identify`, `reset`, `page`, and `captureError`
+- Per-call `EventOptions(userId = ...)` for shared server clients
 - `trackRevenue` for trusted server operations
 - `setGlobalProperties`, `getGlobalProperties`, `removeGlobalProperties`, and
   `clearGlobalProperties`
@@ -112,8 +129,11 @@ endpoint is the worker's `/events` ingestion route, not the tenant-scoped analyt
 - `pending`
 
 Events are queued in memory, flushed by size or interval, and retried with exponential backoff.
-Calls are best-effort after the configured retries are exhausted. Call `shutdown` during graceful
-application termination so queued events are sent.
+When `persistencePath` is set, the SDK atomically records each serialized batch immediately before
+its first network attempt. An exhausted transient failure remains on disk; a later `flush` or
+`shutdown` from a new process replays the byte-identical body and honors a persisted `Retry-After`
+deadline. Terminal responses remove the record. This WAL covers batches that reached transport,
+not events still waiting in the in-memory pre-flush queue; use one client process per path.
 
 ## Development
 

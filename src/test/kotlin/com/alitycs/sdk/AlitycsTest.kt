@@ -39,6 +39,13 @@ class AlitycsTest {
     }
 
     @Test
+    fun `init throws on blank persistence path`() {
+        assertThrows<IllegalArgumentException> {
+            Alitycs.init(AlitycsConfig(apiKey = "test", persistencePath = "  "))
+        }
+    }
+
+    @Test
     fun `track enqueues event`() {
         val sdk = Alitycs.init(makeConfig())
         sdk.track("button_click", mapOf("button" to "submit"))
