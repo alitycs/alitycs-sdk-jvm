@@ -1,9 +1,16 @@
 package com.alitycs.sdk
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.assertThrows
+import java.net.InetSocketAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class AlitycsTest {
 
@@ -34,6 +41,23 @@ class AlitycsTest {
     fun `init throws on whitespace apiKey`() {
         assertThrows<IllegalArgumentException> {
             Alitycs.init(AlitycsConfig(apiKey = "   "))
+        }
+    }
+
+    @Test
+    fun `init throws on blank persistence path`() {
+        assertThrows<IllegalArgumentException> {
+            Alitycs.init(AlitycsConfig(apiKey = "test", persistencePath = "  "))
+        }
+    }
+
+    @Test
+    fun `init rejects invalid queue bounds`() {
+        assertThrows<IllegalArgumentException> {
+            Alitycs.init(makeConfig().copy(maxQueueSize = 0))
+        }
+        assertThrows<IllegalArgumentException> {
+            Alitycs.init(makeConfig().copy(flushSize = 101, maxQueueSize = 100))
         }
     }
 
@@ -140,21 +164,135 @@ class AlitycsTest {
 
     @Test
     fun `reset and blocking lifecycle wrappers complete queued delivery`() {
-        val sdk = Alitycs.init(makeConfig())
-        sdk.identify("blocking-user")
-        sdk.trackRevenue(
-            RevenuePayload.transaction(
-                factId = "blocking-payment",
-                amount = "19.99",
-                currency = "USD",
-            ),
-        )
-        sdk.reset()
-        sdk.track("after_reset")
+        val server = com.sun.net.httpserver.HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/events") { exchange ->
+            exchange.sendResponseHeaders(200, 0)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val sdk = Alitycs.init(makeConfig(server.address.port))
+            sdk.identify("blocking-user")
+            sdk.trackRevenue(
+                RevenuePayload.transaction(
+                    factId = "blocking-payment",
+                    amount = "19.99",
+                    currency = "USD",
+                ),
+            )
+            sdk.reset()
+            sdk.track("after_reset")
 
+            sdk.flushBlocking()
+            assertEquals(0, sdk.pending)
+            sdk.shutdownBlocking()
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `failed delivery is honest - events stay pending after transport failure`() {
+        // localhost:1 refuses connections: with honest failures the events are re-queued,
+        // not silently dropped.
+        val sdk = Alitycs.init(makeConfig())
+        sdk.track("never_delivered")
         sdk.flushBlocking()
-        assertEquals(0, sdk.pending)
+        assertEquals(1, sdk.pending)
         sdk.shutdownBlocking()
+        assertEquals(1, sdk.pending) // shutdown re-attempted delivery and failed again
+    }
+
+    @Test
+    fun `enqueue after shutdown rejects locally instead of silently swallowing`() {
+        val sdk = Alitycs.init(makeConfig())
+        sdk.track("before_shutdown")
+        sdk.shutdownBlocking()
+        assertTrue(sdk.isShutdown)
+        assertEquals(1, sdk.pending) // failed delivery stays pending from before shutdown
+
+        sdk.track("after_shutdown")
+        sdk.page("after_shutdown_page")
+        assertEquals(1, sdk.pending) // post-shutdown events are never queued
+        assertEquals(2, sdk.rejectedLocally)
+    }
+
+    @Test
+    fun `non-batching client rejects enqueue after shutdown`() {
+        val sdk = Alitycs.init(makeConfig().copy(batching = false))
+        sdk.shutdownBlocking()
+        assertTrue(sdk.isShutdown)
+        sdk.track("after_shutdown")
+        assertEquals(0, sdk.pending)
+        assertEquals(1, sdk.rejectedLocally)
+    }
+
+    @Test
+    fun `shutdown and concurrent enqueue account for every event`() {
+        val delivered = AtomicInteger(0)
+        val server = com.sun.net.httpserver.HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/events") { exchange ->
+            val body = exchange.requestBody.bufferedReader().use { it.readText() }
+            delivered.addAndGet(
+                Json.parseToJsonElement(body).jsonObject.getValue("events").jsonArray.size
+            )
+            exchange.sendResponseHeaders(200, 0)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val attempts = 40
+            val sdk = Alitycs.init(
+                makeConfig(server.address.port).copy(flushSize = 100, maxQueueSize = 100)
+            )
+            val start = CountDownLatch(1)
+            val failure = AtomicReference<Throwable?>(null)
+            val producers = (0 until attempts).map { index ->
+                Thread {
+                    start.await()
+                    sdk.track("race_$index")
+                }.also { it.start() }
+            }
+            val shutdown = Thread {
+                try {
+                    start.await()
+                    sdk.shutdownBlocking()
+                } catch (error: Throwable) {
+                    failure.set(error)
+                }
+            }.also { it.start() }
+
+            start.countDown()
+            producers.forEach { it.join() }
+            shutdown.join()
+
+            assertNull(failure.get())
+            assertTrue(sdk.isShutdown)
+            assertEquals(attempts.toLong(), delivered.get().toLong() + sdk.rejectedLocally)
+            assertEquals(0, sdk.pending)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `initDefault shuts down the previous default instance instead of leaking it`() = runBlocking {
+        try {
+            val first = Alitycs.initDefault(makeConfig())
+            assertFalse(first.isShutdown)
+            first.track("held_by_first")
+
+            val second = Alitycs.initDefault(makeConfig())
+            assertTrue(first.isShutdown) // previous scope/timer shut down, not orphaned
+            assertFalse(second.isShutdown)
+
+            // The static surface now routes to the new default only.
+            Alitycs.track("routed_to_second")
+            assertEquals(1, second.pending)
+            assertEquals(1, first.pending)
+        } finally {
+            Alitycs.shutdownDefault()
+        }
     }
 
     @Test

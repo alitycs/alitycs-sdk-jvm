@@ -11,6 +11,20 @@ enum class EventType {
     @SerialName("error") ERROR
 }
 
+/**
+ * Identity scoped to one event. Server applications should pass this on every call
+ * instead of mutating the client's ambient identity with [Alitycs.identify].
+ */
+data class EventOptions @JvmOverloads constructor(
+    val userId: String? = null,
+) {
+    init {
+        require(userId == null || userId.isNotBlank()) {
+            "EventOptions.userId must be non-blank when provided"
+        }
+    }
+}
+
 @Serializable
 data class EventContext(
     val sdkVersion: String,
@@ -24,8 +38,11 @@ data class EventContext(
     val utmSource: String? = null,
     val utmMedium: String? = null,
     val utmCampaign: String? = null,
+    /** Reserved: collected client-side but currently discarded by server-side ingestion. */
     val osName: String? = null,
+    /** Reserved: collected client-side but currently discarded by server-side ingestion. */
     val osVersion: String? = null,
+    /** Reserved: collected client-side but currently discarded by server-side ingestion. */
     val jvmVersion: String? = null
 )
 

@@ -7,11 +7,11 @@ Official open-source Kotlin-first SDK for sending product-analytics events to
 [Alitycs](https://alitycs.com) from JVM 11+ applications. It uses `java.net.http.HttpClient`,
 Kotlin coroutines, and `kotlinx.serialization`.
 
-Current version: `1.0.0`.
+Current version: `1.1.0`.
 
 ## Installation
 
-The Maven coordinates are `com.alitycs:alitycs-sdk-jvm:1.0.0`. Maven Central publication is not
+The Maven coordinates are `com.alitycs:alitycs-sdk-jvm:1.1.0`. Maven Central publication is not
 advertised until the Alitycs namespace and signing credentials are configured. For local use:
 
 ```bash
@@ -24,7 +24,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.alitycs:alitycs-sdk-jvm:1.0.0")
+    implementation("com.alitycs:alitycs-sdk-jvm:1.1.0")
 }
 ```
 
@@ -47,6 +47,21 @@ analytics.captureError("checkout_failed", mapOf("provider" to "stripe"))
 
 analytics.shutdown()
 ```
+
+For a client shared by concurrent server requests, scope the user to each event instead
+of mutating ambient identity with `identify()`:
+
+```kotlin
+import com.alitycs.sdk.EventOptions
+
+analytics.track(
+    "checkout_started",
+    options = EventOptions(userId = request.userId),
+)
+```
+
+The same third argument is available on `trackRevenue`, `captureError`, and `page` and
+does not change the identity used by any other call.
 
 ## Java quick start
 
@@ -92,10 +107,11 @@ Never expose a secret key in a client application.
 | `endpoint`       | `https://api.alitycs.com/events` | Worker ingestion endpoint                                                          |
 | `flushInterval`  | `10000`                          | Batch flush interval in milliseconds                                               |
 | `flushSize`      | `25`                             | Queue size that triggers a flush                                                   |
-| `maxQueueSize`   | `1000`                           | Maximum queued events                                                              |
+| `maxQueueSize`   | `1000`                           | Maximum in-memory events and durable WAL event bound                               |
 | `maxRetries`     | `3`                              | Retry attempts for retryable transport failures                                    |
 | `sessionTimeout` | `1800000`                        | Inactivity timeout in milliseconds                                                 |
 | `batching`       | `true`                           | Send queued batches or one event per request                                       |
+| `persistencePath` | `null`                          | Optional exact in-flight batch WAL path for restart recovery                       |
 | `debug`          | `false`                          | Enable SDK diagnostics                                                             |
 
 Requests use `Authorization: Bearer <apiKey>` and `Content-Type: application/json`. The default
@@ -104,6 +120,7 @@ endpoint is the worker's `/events` ingestion route, not the tenant-scoped analyt
 ## API surface
 
 - `track`, `identify`, `reset`, `page`, and `captureError`
+- Per-call `EventOptions(userId = ...)` for shared server clients
 - `trackRevenue` for trusted server operations
 - `setGlobalProperties`, `getGlobalProperties`, `removeGlobalProperties`, and
   `clearGlobalProperties`
@@ -112,8 +129,14 @@ endpoint is the worker's `/events` ingestion route, not the tenant-scoped analyt
 - `pending`
 
 Events are queued in memory, flushed by size or interval, and retried with exponential backoff.
-Calls are best-effort after the configured retries are exhausted. Call `shutdown` during graceful
-application termination so queued events are sent.
+When `persistencePath` is set, the SDK atomically records each serialized batch immediately before
+its first network attempt. An exhausted transient failure remains on disk; a later `flush` or
+`shutdown` from a new process replays the byte-identical body and honors a persisted `Retry-After`
+deadline. Terminal responses remove the record. This WAL covers batches that reached transport,
+not events still waiting in the in-memory pre-flush queue; use one client process per path. The WAL
+retains at most `maxQueueSize` events and evicts the oldest batches with an unconditional warning
+when that bound is reached. A corrupt or unsupported WAL fails client initialization rather than
+silently discarding unacknowledged analytics.
 
 ## Development
 

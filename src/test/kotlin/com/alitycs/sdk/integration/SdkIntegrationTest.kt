@@ -2,6 +2,9 @@ package com.alitycs.sdk.integration
 
 import com.alitycs.sdk.*
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.AfterEach
@@ -73,7 +76,7 @@ class SdkIntegrationTest {
         assertEquals("submit", props["button"]!!.jsonPrimitive.content)
 
         val ctx = event["context"]!!.jsonObject
-        assertEquals("1.0.0", ctx["sdkVersion"]!!.jsonPrimitive.content)
+        assertEquals("1.1.0", ctx["sdkVersion"]!!.jsonPrimitive.content)
         assertEquals("kotlin", ctx["sdkLanguage"]!!.jsonPrimitive.content)
     }
 
@@ -104,6 +107,88 @@ class SdkIntegrationTest {
         for (event in events) {
             assertEquals("user-456", event.jsonObject["userId"]!!.jsonPrimitive.content)
         }
+    }
+
+    @Test
+    fun `shared client keeps concurrent per-call users isolated`() = runTest {
+        val sdk = Alitycs.init(
+            AlitycsConfig(
+                apiKey = "integration-test-key",
+                endpoint = "http://localhost:$port/events",
+                batching = true,
+                flushInterval = 60_000L,
+                flushSize = 100,
+            ),
+        )
+
+        coroutineScope {
+            for (index in 0 until 25) {
+                launch(Dispatchers.Default) {
+                    sdk.track(
+                        "request_a_$index",
+                        options = EventOptions(userId = "usr_request_a"),
+                    )
+                }
+                launch(Dispatchers.Default) {
+                    sdk.track(
+                        "request_b_$index",
+                        options = EventOptions(userId = "usr_request_b"),
+                    )
+                }
+            }
+        }
+        sdk.flush()
+        sdk.shutdown()
+
+        val events = receivedBodies.flatMap { body ->
+            json.parseToJsonElement(body).jsonObject["events"]!!.jsonArray
+        }
+        assertEquals(50, events.size)
+        for (event in events) {
+            val objectValue = event.jsonObject
+            val name = objectValue["event"]!!.jsonPrimitive.content
+            val expectedUser = if (name.startsWith("request_a_")) {
+                "usr_request_a"
+            } else {
+                "usr_request_b"
+            }
+            assertEquals(expectedUser, objectValue["userId"]!!.jsonPrimitive.content, name)
+        }
+    }
+
+    @Test
+    fun `per-call user applies to every event API`() = runTest {
+        val sdk = Alitycs.init(
+            AlitycsConfig(
+                apiKey = "integration-test-key",
+                endpoint = "http://localhost:$port/events",
+                batching = true,
+                flushInterval = 60_000L,
+                flushSize = 100,
+            ),
+        )
+
+        sdk.track("scoped_track", options = EventOptions("usr_track"))
+        sdk.captureError("scoped_error", options = EventOptions("usr_error"))
+        sdk.page("scoped_page", options = EventOptions("usr_page"))
+        sdk.trackRevenue(
+            RevenuePayload.transaction("scoped_fact", "5.00", "USD"),
+            options = EventOptions("usr_revenue"),
+        )
+        sdk.flush()
+        sdk.shutdown()
+
+        val usersByEvent = receivedBodies
+            .flatMap { body -> json.parseToJsonElement(body).jsonObject["events"]!!.jsonArray }
+            .associate { event ->
+                val objectValue = event.jsonObject
+                objectValue["event"]!!.jsonPrimitive.content to
+                    objectValue["userId"]!!.jsonPrimitive.content
+            }
+        assertEquals("usr_track", usersByEvent["scoped_track"])
+        assertEquals("usr_error", usersByEvent["scoped_error"])
+        assertEquals("usr_page", usersByEvent["scoped_page"])
+        assertEquals("usr_revenue", usersByEvent["revenue_transaction"])
     }
 
     @Test
