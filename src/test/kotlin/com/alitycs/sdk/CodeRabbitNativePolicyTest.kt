@@ -104,6 +104,11 @@ class CodeRabbitNativePolicyTest {
         assertTrue(release.contains("Verify tag targets reviewed main history"))
         assertTrue(release.contains("Recheck immutable release tag"))
         assertTrue(release.contains("git merge-base --is-ancestor"))
+        assertTrue(release.contains("vars.MAVEN_CENTRAL_PUBLISH_ENABLED == 'true'"))
+        assertTrue(release.contains("environment: maven-central"))
+        assertTrue(release.contains("publishingType=${'$'}{publishing_type}"))
+        assertTrue(release.contains("${'$'}{GITHUB_REF}^{tag}"))
+        assertTrue(release.contains("central-bundle.zip"))
         assertFalse(release.contains("concurrency:"))
         assertFalse(readAllWorkflows().contains("runs-on: ubuntu-latest"))
     }

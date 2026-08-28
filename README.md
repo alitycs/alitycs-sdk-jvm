@@ -11,8 +11,9 @@ Current version: `1.1.0`.
 
 ## Installation
 
-The Maven coordinates are `com.alitycs:alitycs-sdk-jvm:1.1.0`. Maven Central publication is not
-advertised until the Alitycs namespace and signing credentials are configured. For local use:
+The Maven coordinates are `com.alitycs:alitycs-sdk-jvm:1.1.0`. Maven Central publication is enabled
+only after the Alitycs namespace and protected signing credentials are configured. Until the first
+Central deployment is published, use the local repository:
 
 ```bash
 ./gradlew publishToMavenLocal
@@ -28,7 +29,7 @@ dependencies {
 }
 ```
 
-Compiled JARs, a sources JAR, a Maven POM, and checksums are attached to each
+Compiled JARs, sources and Javadoc JARs, a Maven POM, and checksums are attached to each
 [GitHub Release](https://github.com/alitycs/alitycs-sdk-jvm/releases).
 
 ## Kotlin quick start
