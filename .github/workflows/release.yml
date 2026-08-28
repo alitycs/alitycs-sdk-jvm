@@ -171,6 +171,8 @@ jobs:
           EXPECTED_TAG_COMMIT: ${{ needs.build.outputs.tag_commit }}
           EXPECTED_TAG_OBJECT: ${{ needs.build.outputs.tag_object }}
         run: |
+          set -euo pipefail
+
           : "${CENTRAL_PORTAL_USERNAME:?Missing CENTRAL_PORTAL_USERNAME}"
           : "${CENTRAL_PORTAL_PASSWORD:?Missing CENTRAL_PORTAL_PASSWORD}"
           : "${MAVEN_GPG_PRIVATE_KEY:?Missing MAVEN_GPG_PRIVATE_KEY}"
@@ -243,9 +245,12 @@ jobs:
 
           git fetch --no-tags --force origin \
             "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
-          [[ "$(git rev-parse "${GITHUB_REF}^{tag}")" == "$EXPECTED_TAG_OBJECT" ]]
-          [[ "$(git rev-parse "${GITHUB_REF}^{commit}")" == "$EXPECTED_TAG_COMMIT" ]]
-          [[ "$GITHUB_SHA" == "$EXPECTED_TAG_COMMIT" ]]
+          if [[ "$(git rev-parse "${GITHUB_REF}^{tag}")" != "$EXPECTED_TAG_OBJECT" ]] ||
+            [[ "$(git rev-parse "${GITHUB_REF}^{commit}")" != "$EXPECTED_TAG_COMMIT" ]] ||
+            [[ "$GITHUB_SHA" != "$EXPECTED_TAG_COMMIT" ]]; then
+            echo "error: release tag changed after the build completed" >&2
+            exit 1
+          fi
 
           upload_code="$(
             curl --config "$auth_config" --request POST \
