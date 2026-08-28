@@ -1,6 +1,8 @@
 package com.alitycs.sdk
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -14,6 +16,7 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         connectTimeoutMs = config.connectTimeoutMs,
         requestTimeoutMs = config.requestTimeoutMs,
         persistencePath = config.persistencePath,
+        maxDurableEvents = config.maxQueueSize,
     )
     private val sessionManager = SessionManager(config.sessionTimeout)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -35,6 +38,11 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     private val globalProperties = ConcurrentHashMap<String, Any?>()
     private val inFlight = ConcurrentHashMap.newKeySet<Job>()
     private val rejectedLocallyCounter = AtomicLong(0)
+    private val lifecycleLock = Any()
+    private val shutdownMutex = Mutex()
+
+    @Volatile
+    private var acceptingEvents = true
 
     /** Events rejected locally at build time for violating ingestion limits. */
     val rejectedLocally: Long get() = rejectedLocallyCounter.get()
@@ -113,7 +121,8 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         if (batchManager != null) {
             batchManager.flush()
         } else {
-            transport.recover()
+            // Let this process's active sends finish before replaying the WAL; otherwise flush
+            // could submit the same persisted batch concurrently with its original request.
             inFlight.toList().forEach { it.join() }
             transport.recover()
         }
@@ -126,14 +135,21 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         }
     }
 
-    suspend fun shutdown() {
-        batchManager?.stop()
-        if (batchManager != null) {
-            batchManager.flush()
-        } else {
-            inFlight.toList().forEach { it.join() }
+    suspend fun shutdown() = shutdownMutex.withLock {
+        synchronized(lifecycleLock) {
+            if (!acceptingEvents) return@withLock
+            // Close admission before draining. An enqueue that built its event concurrently
+            // must pass the same lock before it can add work, so shutdown cannot miss it.
+            acceptingEvents = false
+            batchManager?.stop()
         }
-        scope.cancel()
+
+        try {
+            flush()
+        } finally {
+            // Cancellation of the caller must not leak this client's timer or child jobs.
+            scope.cancel()
+        }
     }
 
     @JvmOverloads
@@ -146,9 +162,9 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
     val pending: Int
         get() = batchManager?.pending ?: inFlight.size
 
-    /** True once shutdown() has completed; a shut-down client rejects further events. */
+    /** True once shutdown() has begun closing admission; the client rejects further events. */
     val isShutdown: Boolean
-        get() = !scope.isActive
+        get() = !acceptingEvents
 
     private fun enqueue(
         type: EventType,
@@ -157,13 +173,6 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
         revenue: RevenuePayload? = null,
         options: EventOptions = EventOptions(),
     ) {
-        if (!scope.isActive) {
-            // Post-shutdown events are rejected locally like any limit violation:
-            // never queued, never sent — warn + counter instead of a silent swallow.
-            rejectedLocallyCounter.incrementAndGet()
-            System.err.println("[Alitycs] WARN Client is shut down — event '$name' rejected locally")
-            return
-        }
         sessionManager.touch()
         val session = sessionManager.getSession()
 
@@ -192,32 +201,54 @@ class Alitycs private constructor(private val config: AlitycsConfig) {
             return
         }
 
-        if (batchManager != null) {
-            batchManager.add(event)
-        } else {
-            val job = scope.launch {
-                val payload = BatchPayload(
-                    batchId = "batch_${generateId()}",
-                    sentAt = System.currentTimeMillis(),
-                    events = listOf(event)
-                )
-                when (val outcome = transport.send(payload)) {
-                    is SendOutcome.Success -> Unit
-                    is SendOutcome.Rejected ->
-                        System.err.println(
-                            "[Alitycs] WARN Server rejected event '${event.eventId}' with " +
-                                "HTTP ${outcome.status} — dropped"
-                        )
-                    is SendOutcome.TransportFailure ->
-                        System.err.println(
-                            "[Alitycs] WARN Transport failure (${outcome.cause?.message ?: "unknown"}) — " +
-                                "event '${event.eventId}' could not be delivered"
-                        )
-                }
+        synchronized(lifecycleLock) {
+            if (!acceptingEvents || !scope.isActive) {
+                rejectAfterShutdown(name)
+                return
             }
-            inFlight.add(job)
-            job.invokeOnCompletion { inFlight.remove(job) }
+
+            if (batchManager != null) {
+                batchManager.add(event)
+            } else {
+                val job = scope.launch {
+                    val payload = BatchPayload(
+                        batchId = "batch_${generateId()}",
+                        sentAt = System.currentTimeMillis(),
+                        events = listOf(event)
+                    )
+                    when (val outcome = transport.send(payload)) {
+                        is SendOutcome.Success -> Unit
+                        is SendOutcome.Rejected -> {
+                            System.err.println(
+                                "[Alitycs] WARN Server rejected event '${event.eventId}' with " +
+                                    "HTTP ${outcome.status} — dropped"
+                            )
+                        }
+                        is SendOutcome.TransportFailure -> {
+                            val disposition =
+                                if (outcome.retained) {
+                                    "event '${event.eventId}' retained for restart"
+                                } else {
+                                    "event '${event.eventId}' could not be delivered"
+                                }
+                            System.err.println(
+                                "[Alitycs] WARN Transport failure " +
+                                    "(${outcome.cause?.message ?: "unknown"}) — $disposition"
+                            )
+                        }
+                    }
+                }
+                inFlight.add(job)
+                job.invokeOnCompletion { inFlight.remove(job) }
+            }
         }
+    }
+
+    private fun rejectAfterShutdown(name: String) {
+        // Post-shutdown events are rejected locally like any limit violation:
+        // never queued, never sent — warn + counter instead of a silent swallow.
+        rejectedLocallyCounter.incrementAndGet()
+        System.err.println("[Alitycs] WARN Client is shut down — event '$name' rejected locally")
     }
 
     companion object {

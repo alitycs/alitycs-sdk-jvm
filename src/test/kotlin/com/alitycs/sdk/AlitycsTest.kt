@@ -1,10 +1,16 @@
 package com.alitycs.sdk
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.assertThrows
 import java.net.InetSocketAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class AlitycsTest {
 
@@ -42,6 +48,16 @@ class AlitycsTest {
     fun `init throws on blank persistence path`() {
         assertThrows<IllegalArgumentException> {
             Alitycs.init(AlitycsConfig(apiKey = "test", persistencePath = "  "))
+        }
+    }
+
+    @Test
+    fun `init rejects invalid queue bounds`() {
+        assertThrows<IllegalArgumentException> {
+            Alitycs.init(makeConfig().copy(maxQueueSize = 0))
+        }
+        assertThrows<IllegalArgumentException> {
+            Alitycs.init(makeConfig().copy(flushSize = 101, maxQueueSize = 100))
         }
     }
 
@@ -209,6 +225,54 @@ class AlitycsTest {
         sdk.track("after_shutdown")
         assertEquals(0, sdk.pending)
         assertEquals(1, sdk.rejectedLocally)
+    }
+
+    @Test
+    fun `shutdown and concurrent enqueue account for every event`() {
+        val delivered = AtomicInteger(0)
+        val server = com.sun.net.httpserver.HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/events") { exchange ->
+            val body = exchange.requestBody.bufferedReader().use { it.readText() }
+            delivered.addAndGet(
+                Json.parseToJsonElement(body).jsonObject.getValue("events").jsonArray.size
+            )
+            exchange.sendResponseHeaders(200, 0)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val attempts = 40
+            val sdk = Alitycs.init(
+                makeConfig(server.address.port).copy(flushSize = 100, maxQueueSize = 100)
+            )
+            val start = CountDownLatch(1)
+            val failure = AtomicReference<Throwable?>(null)
+            val producers = (0 until attempts).map { index ->
+                Thread {
+                    start.await()
+                    sdk.track("race_$index")
+                }.also { it.start() }
+            }
+            val shutdown = Thread {
+                try {
+                    start.await()
+                    sdk.shutdownBlocking()
+                } catch (error: Throwable) {
+                    failure.set(error)
+                }
+            }.also { it.start() }
+
+            start.countDown()
+            producers.forEach { it.join() }
+            shutdown.join()
+
+            assertNull(failure.get())
+            assertTrue(sdk.isShutdown)
+            assertEquals(attempts.toLong(), delivered.get().toLong() + sdk.rejectedLocally)
+            assertEquals(0, sdk.pending)
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test

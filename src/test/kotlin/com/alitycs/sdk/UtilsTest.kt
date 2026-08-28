@@ -137,6 +137,35 @@ class UtilsTest {
     }
 
     @Test
+    fun `validateEvent measures estimated size in UTF-8 bytes`() {
+        // Each value is within the 1,000-character limit and there are fewer than 50
+        // properties, but two-byte UTF-8 characters take the event beyond 64 KiB.
+        val properties = (1..40).associate { "k$it" to "é".repeat(900) }
+        val exception = assertThrows<EventRejectedException> {
+            validateEvent(validEvent(properties))
+        }
+        assertTrue(exception.message!!.contains("exceeds the maximum allowed size"))
+    }
+
+    @Test
+    fun `validateEvent rechecks deserialized revenue invariants`() {
+        val base = RevenuePayload.transaction("fact", "1.00", "USD")
+        val invalid = listOf(
+            base.copy(version = 2) to "revenue.version",
+            base.copy(kind = "unsupported") to "revenue.kind",
+            base.copy(factId = "") to "revenue.factId",
+            base.copy(currency = "usd") to "revenue.currency",
+        )
+
+        invalid.forEach { (revenue, expectedMessage) ->
+            val exception = assertThrows<EventRejectedException> {
+                validateEvent(validEvent().copy(revenue = revenue))
+            }
+            assertTrue(exception.message!!.contains(expectedMessage))
+        }
+    }
+
+    @Test
     fun `validateEvent accumulates multiple violations in one message`() {
         val event = validEvent(
             mapOf(

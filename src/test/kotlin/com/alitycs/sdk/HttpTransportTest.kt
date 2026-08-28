@@ -1,6 +1,7 @@
 package com.alitycs.sdk
 
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -12,6 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HttpTransportTest {
 
     @TempDir
@@ -246,7 +248,7 @@ class HttpTransportTest {
     }
 
     @Test
-    fun `caps a huge Retry-After at ten seconds`() = runTest {
+    fun `honours a huge Retry-After using bounded sleep slices`() = runTest {
         val requestCount = AtomicInteger(0)
         server.createContext("/events") { exchange ->
             if (requestCount.incrementAndGet() == 1) {
@@ -266,7 +268,9 @@ class HttpTransportTest {
             debug = false
         )
         assertEquals(SendOutcome.Success, transport.send(makePayload()))
-        assertEquals(10_000L, testScheduler.currentTime)
+        // A few wall-clock milliseconds can elapse between parsing the header and
+        // computing the remaining deadline.
+        assertTrue(testScheduler.currentTime in 3_599_000L..3_600_000L)
     }
 
     @Test

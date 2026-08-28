@@ -292,4 +292,67 @@ class BatchManagerTest {
         assertEquals(2, manager.pending)
         assertEquals(0, manager.lostTotal)
     }
+
+    @Test
+    fun `durable retained failure stays in WAL without an in-memory duplicate`() = runTest {
+        val manager = BatchManager(
+            flushSize = 100,
+            flushInterval = 60_000L,
+            maxQueueSize = 100,
+            debug = false,
+            sendFn = { SendOutcome.TransportFailure(Exception("offline"), retained = true) },
+            durablePendingEvents = { 2 },
+            durable = true,
+        )
+        manager.add(makeEvent("retained1"))
+        manager.add(makeEvent("retained2"))
+
+        manager.flush()
+
+        assertEquals(2, manager.pending)
+        assertEquals(0, manager.requeuedTotal)
+        assertEquals(0, manager.lostTotal)
+    }
+
+    @Test
+    fun `durable cancellation conservatively restores drained events`() = runTest {
+        val manager = BatchManager(
+            flushSize = 100,
+            flushInterval = 60_000L,
+            maxQueueSize = 100,
+            debug = false,
+            sendFn = { throw CancellationException("cancelled before WAL ownership is known") },
+            durable = true,
+        )
+        manager.add(makeEvent("kept1"))
+        manager.add(makeEvent("kept2"))
+
+        assertThrows<CancellationException> { manager.flush() }
+
+        assertEquals(2, manager.pending)
+        assertEquals(2, manager.requeuedTotal)
+        assertEquals(0, manager.lostTotal)
+    }
+
+    @Test
+    fun `batch splitting has a hard request amplification bound`() = runTest {
+        var calls = 0
+        val manager = BatchManager(
+            flushSize = 200,
+            flushInterval = 60_000L,
+            maxQueueSize = 200,
+            debug = false,
+            sendFn = {
+                calls += 1
+                SendOutcome.Rejected(status = 400, isBatchReject = true)
+            },
+        )
+        repeat(100) { manager.add(makeEvent("event$it")) }
+
+        manager.flush()
+
+        assertEquals(BatchManager.MAX_SENDS_PER_FLUSH, calls)
+        assertEquals(100, manager.lostTotal)
+        assertEquals(0, manager.pending)
+    }
 }

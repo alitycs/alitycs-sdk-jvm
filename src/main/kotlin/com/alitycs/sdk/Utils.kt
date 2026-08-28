@@ -107,10 +107,10 @@ fun validateEvent(event: AnalyticsEvent) {
     }
 
     val estimatedSize =
-        (event.userId?.length ?: 0) +
-            event.anonymousId.length +
-            event.event.length +
-            event.properties.entries.sumOf { it.key.length + it.value.length } +
+        (event.userId?.utf8Size() ?: 0) +
+            event.anonymousId.utf8Size() +
+            event.event.utf8Size() +
+            event.properties.entries.sumOf { it.key.utf8Size() + it.value.utf8Size() } +
             Limits.EVENT_SIZE_OVERHEAD
     if (estimatedSize > Limits.MAX_EVENT_SIZE_BYTES) {
         errors.add(
@@ -123,6 +123,8 @@ fun validateEvent(event: AnalyticsEvent) {
         throw EventRejectedException("Event rejected locally: " + errors.joinToString("; "))
     }
 }
+
+private fun String.utf8Size(): Int = toByteArray(Charsets.UTF_8).size
 
 private fun validateTimestamp(timestamp: Long, errors: MutableList<String>) {
     if (timestamp < Limits.MIN_EPOCH_MILLIS) {

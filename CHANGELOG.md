@@ -16,7 +16,8 @@ here before a version tag is created.
   `AlitycsConfig`; previously `HttpTransport` had none and a stalled server could wedge a flush
   indefinitely.
 - A 429 response's `Retry-After` header (delta-seconds or HTTP-date) is now honoured: the retry
-  after it waits at least that long instead of the default backoff, still capped at 10s.
+  after it waits until the complete server deadline instead of the default backoff. Long waits are
+  divided into sleep slices of at most 10s without issuing an early request.
   Previously the header was ignored and rate-limited clients hammered through the rate limit.
 - Client-side enforcement of the canonical ingestion limits (identical to the server's
   `EventValidator`): ≤50 properties per event, property keys ≤100 chars, values ≤1000 chars,
@@ -27,7 +28,8 @@ here before a version tag is created.
   never truncated silently.
 - Split-on-batch-rejection: when the server rejects an entire batch with HTTP 400 (one invalid
   event poisons the whole batch), `BatchManager` splits the payload in half and re-sends each half
-  recursively so valid events are still delivered.
+  recursively so valid events are still delivered. A 64-request budget per flush prevents an
+  adversarial rejected batch from causing unbounded request amplification.
 
 ### Changed
 - Batch sends now report honest outcomes (`SendOutcome`: Success / Rejected / TransportFailure)
@@ -38,11 +40,16 @@ here before a version tag is created.
   and drained events are re-queued first.
 - Failed deliveries no longer report an empty queue: `flush()`/`shutdown()` leave undelivered
   events pending rather than claiming success.
-- Events enqueued after `shutdown()` completes are now rejected locally like any limit violation
+- `shutdown()` now closes event admission atomically before draining and always cancels its scope,
+  so an enqueue racing with shutdown is either included in that drain or explicitly rejected.
+  Events enqueued after shutdown begins are rejected locally like any limit violation
   (warn-level log plus the `rejectedLocally` counter, never queued) instead of being silently
   swallowed: previously they were queued while the flush timer was stopped, so they were never
   delivered and `pending` rose without effect. The new `Alitycs.isShutdown` property exposes the
   state.
+- The durable WAL and in-memory queue are both bounded by `maxQueueSize`. When retaining a new
+  batch would exceed the WAL bound, the oldest complete batches are evicted with an unconditional
+  warning; WAL replacement now forces file contents and cleans temporary files after failures.
 - `Alitycs.initDefault()` no longer leaks the previous default instance: it shuts the old instance
   down (bounded by the standard blocking-shutdown timeout) before installing the new one, instead
   of orphaning its coroutine scope, flush timer, and HTTP client per call. If that shutdown fails,

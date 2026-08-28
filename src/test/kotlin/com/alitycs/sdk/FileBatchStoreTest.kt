@@ -50,4 +50,20 @@ class FileBatchStoreTest {
         Files.writeString(path, "not-json")
         assertThrows<IllegalArgumentException> { FileBatchStore(path.toString()) }
     }
+
+    @Test
+    fun `durable event bound evicts the oldest complete batches`() {
+        val path = directory.resolve("bounded-wal.json")
+        val store = FileBatchStore(path.toString(), maxPendingEvents = 3)
+        val oldest = DurableBatchRecord("batch_oldest", "{\"batchId\":\"batch_oldest\"}", 2)
+        val newest = DurableBatchRecord("batch_newest", "{\"batchId\":\"batch_newest\"}", 2)
+
+        assertTrue(store.put(oldest).isEmpty())
+        assertEquals(listOf(oldest), store.put(newest))
+        assertEquals(listOf(newest), store.snapshot())
+        assertEquals(2, store.pendingEvents())
+
+        val restarted = FileBatchStore(path.toString(), maxPendingEvents = 3)
+        assertEquals(listOf("batch_newest"), restarted.snapshot().map { it.batchId })
+    }
 }

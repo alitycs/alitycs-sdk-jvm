@@ -17,6 +17,10 @@ data class AlitycsConfig @JvmOverloads constructor(
 ) {
     init {
         require(apiKey.isNotBlank()) { "apiKey is required" }
+        require(flushSize > 0) { "flushSize must be positive" }
+        require(maxQueueSize > 0) { "maxQueueSize must be positive" }
+        require(flushSize <= maxQueueSize) { "flushSize must not exceed maxQueueSize" }
+        require(maxRetries >= 0) { "maxRetries must not be negative" }
         require(connectTimeoutMs > 0) { "connectTimeoutMs must be positive" }
         require(requestTimeoutMs > 0) { "requestTimeoutMs must be positive" }
         require(persistencePath == null || persistencePath.isNotBlank()) {

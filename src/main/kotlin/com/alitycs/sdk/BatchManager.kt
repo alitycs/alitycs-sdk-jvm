@@ -8,7 +8,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicLong
 
 class BatchManager(
@@ -21,7 +21,8 @@ class BatchManager(
     private val durablePendingEvents: () -> Int = { 0 },
     private val durable: Boolean = false,
 ) {
-    private val queue = ConcurrentLinkedDeque<AnalyticsEvent>()
+    private val queue = ArrayDeque<AnalyticsEvent>()
+    private val queueLock = Any()
     private val flushMutex = Mutex()
     private var timerJob: Job? = null
     private var scope: CoroutineScope? = null
@@ -45,7 +46,7 @@ class BatchManager(
         timerJob = scope.launch {
             while (isActive) {
                 delay(flushInterval)
-                if (queue.isNotEmpty()) {
+                if (hasQueuedEvents()) {
                     flush()
                 }
             }
@@ -59,14 +60,20 @@ class BatchManager(
     }
 
     fun add(event: AnalyticsEvent) {
-        if (queue.size >= maxQueueSize) {
+        val accepted: Boolean
+        val shouldFlush: Boolean
+        synchronized(queueLock) {
+            accepted = queue.size < maxQueueSize
+            if (accepted) queue.addLast(event)
+            shouldFlush = accepted && queue.size >= flushSize
+        }
+        if (!accepted) {
             lostTotalCounter.incrementAndGet()
             warn("Queue full — dropping event '${event.event}'")
             return
         }
-        queue.add(event)
 
-        if (queue.size >= flushSize) {
+        if (shouldFlush) {
             scope?.launch { flush() }
         }
     }
@@ -74,11 +81,10 @@ class BatchManager(
     suspend fun flush() {
         flushMutex.withLock {
             if (recoverFn() is SendOutcome.TransportFailure) return
-            if (queue.isEmpty()) return
-
-            val events = mutableListOf<AnalyticsEvent>()
-            while (queue.isNotEmpty()) {
-                queue.poll()?.let { events.add(it) }
+            val events = synchronized(queueLock) {
+                buildList(queue.size) {
+                    while (queue.isNotEmpty()) add(queue.removeFirst())
+                }
             }
 
             if (events.isEmpty()) return
@@ -88,17 +94,23 @@ class BatchManager(
             val delivered = mutableListOf<AnalyticsEvent>()
             val lost = mutableListOf<AnalyticsEvent>()
             val failed = mutableListOf<AnalyticsEvent>()
+            val splitBudget = SplitBudget(MAX_SENDS_PER_FLUSH)
 
             try {
-                deliver(events, depth = 0, delivered = delivered, lost = lost, failed = failed)
+                deliver(
+                    events,
+                    depth = 0,
+                    splitBudget = splitBudget,
+                    delivered = delivered,
+                    lost = lost,
+                    failed = failed,
+                )
             } catch (e: CancellationException) {
                 // Never swallow cancellation — but never drop drained-but-undelivered events either.
-                val undelivered = if (durable) {
-                    emptyList()
-                } else {
-                    events.filterNot { event ->
-                        delivered.containsIdentity(event) || lost.containsIdentity(event)
-                    }
+                // A durable send may be cancelled before the WAL write finishes, so requeue
+                // conservatively. Stable event IDs make a retained duplicate safe to replay.
+                val undelivered = events.filterNot { event ->
+                    delivered.containsIdentity(event) || lost.containsIdentity(event)
                 }
                 requeueAtHead(undelivered)
                 throw e
@@ -126,10 +138,21 @@ class BatchManager(
     private suspend fun deliver(
         events: List<AnalyticsEvent>,
         depth: Int,
+        splitBudget: SplitBudget,
         delivered: MutableList<AnalyticsEvent>,
         lost: MutableList<AnalyticsEvent>,
         failed: MutableList<AnalyticsEvent>,
     ) {
+        if (splitBudget.remaining <= 0) {
+            lostTotalCounter.addAndGet(events.size.toLong())
+            warn(
+                "Batch-split request limit reached — dropping ${events.size} event(s): " +
+                    events.map { it.eventId }
+            )
+            lost.addAll(events)
+            return
+        }
+        splitBudget.remaining -= 1
         val payload = BatchPayload(
             batchId = "batch_${generateId()}",
             sentAt = System.currentTimeMillis(),
@@ -153,8 +176,22 @@ class BatchManager(
             is SendOutcome.Rejected -> {
                 if (outcome.isBatchReject && events.size > 1 && depth < MAX_SPLIT_DEPTH) {
                     val mid = events.size / 2
-                    deliver(events.subList(0, mid), depth + 1, delivered, lost, failed)
-                    deliver(events.subList(mid, events.size), depth + 1, delivered, lost, failed)
+                    deliver(
+                        events.subList(0, mid),
+                        depth + 1,
+                        splitBudget,
+                        delivered,
+                        lost,
+                        failed,
+                    )
+                    deliver(
+                        events.subList(mid, events.size),
+                        depth + 1,
+                        splitBudget,
+                        delivered,
+                        lost,
+                        failed,
+                    )
                 } else {
                     lostTotalCounter.addAndGet(events.size.toLong())
                     warn(
@@ -181,9 +218,22 @@ class BatchManager(
 
     private fun requeueAtHead(events: Collection<AnalyticsEvent>) {
         if (events.isEmpty()) return
-        requeuedTotalCounter.addAndGet(events.size.toLong())
-        // Iterating in reverse keeps the original queue order once prepended at the head.
-        events.reversed().forEach { queue.addFirst(it) }
+        val overflow = mutableListOf<AnalyticsEvent>()
+        synchronized(queueLock) {
+            // Iterating in reverse keeps the original queue order once prepended at the head.
+            events.reversed().forEach { queue.addFirst(it) }
+            // Retried survivors take priority; discard the newest tail if concurrent producers
+            // filled the bounded queue while this flush was in flight.
+            while (queue.size > maxQueueSize) overflow.add(queue.removeLast())
+        }
+        requeuedTotalCounter.addAndGet((events.size - overflow.size).toLong())
+        if (overflow.isNotEmpty()) {
+            lostTotalCounter.addAndGet(overflow.size.toLong())
+            warn(
+                "Queue full while restoring a failed batch — dropping ${overflow.size} " +
+                    "newest event(s): ${overflow.map { it.eventId }}"
+            )
+        }
     }
 
     private fun warn(message: String) {
@@ -192,10 +242,17 @@ class BatchManager(
         System.err.println("[Alitycs] WARN $message")
     }
 
-    val pending: Int get() = queue.size + durablePendingEvents()
+    private fun hasQueuedEvents(): Boolean = synchronized(queueLock) { queue.isNotEmpty() }
+
+    val pending: Int
+        get() = synchronized(queueLock) { queue.size } + durablePendingEvents()
+
+    private data class SplitBudget(var remaining: Int)
 
     companion object {
         /** Recursion guard for batch splitting: enough for ~2^32 events, far beyond queue limits. */
         const val MAX_SPLIT_DEPTH = 32
+        /** Hard request-amplification bound for recursively isolating HTTP 400 poison events. */
+        const val MAX_SENDS_PER_FLUSH = 64
     }
 }

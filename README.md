@@ -107,7 +107,7 @@ Never expose a secret key in a client application.
 | `endpoint`       | `https://api.alitycs.com/events` | Worker ingestion endpoint                                                          |
 | `flushInterval`  | `10000`                          | Batch flush interval in milliseconds                                               |
 | `flushSize`      | `25`                             | Queue size that triggers a flush                                                   |
-| `maxQueueSize`   | `1000`                           | Maximum queued events                                                              |
+| `maxQueueSize`   | `1000`                           | Maximum in-memory events and durable WAL event bound                               |
 | `maxRetries`     | `3`                              | Retry attempts for retryable transport failures                                    |
 | `sessionTimeout` | `1800000`                        | Inactivity timeout in milliseconds                                                 |
 | `batching`       | `true`                           | Send queued batches or one event per request                                       |
@@ -133,7 +133,10 @@ When `persistencePath` is set, the SDK atomically records each serialized batch 
 its first network attempt. An exhausted transient failure remains on disk; a later `flush` or
 `shutdown` from a new process replays the byte-identical body and honors a persisted `Retry-After`
 deadline. Terminal responses remove the record. This WAL covers batches that reached transport,
-not events still waiting in the in-memory pre-flush queue; use one client process per path.
+not events still waiting in the in-memory pre-flush queue; use one client process per path. The WAL
+retains at most `maxQueueSize` events and evicts the oldest batches with an unconditional warning
+when that bound is reached. A corrupt or unsupported WAL fails client initialization rather than
+silently discarding unacknowledged analytics.
 
 ## Development
 
