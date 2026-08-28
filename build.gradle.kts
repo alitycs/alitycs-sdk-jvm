@@ -1,6 +1,7 @@
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
+import org.gradle.api.tasks.bundling.Jar
 
 plugins {
     kotlin("jvm") version "1.9.24"
@@ -16,6 +17,7 @@ java {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
     withSourcesJar()
+    withJavadocJar()
 }
 
 kotlin {
@@ -186,6 +188,10 @@ tasks.jar {
     from("LICENSE") {
         into("META-INF")
     }
+}
+
+tasks.named<Jar>("javadocJar") {
+    from("README.md")
 }
 
 tasks.withType<AbstractArchiveTask>().configureEach {
