@@ -69,9 +69,9 @@ reviews:
         require a clear reason for every added artifact, including gradle-wrapper.jar.
     - path: "gradle/verification-metadata.xml"
       instructions: >-
-        Require a matching declared dependency or plugin change for every new artifact. Keep SHA-256
-        checksums and trusted-key scope minimal, reject wildcard trust expansion, and require the
-        dependency-review and Snyk Open Source checks to pass.
+        Require every new artifact to be reachable from a changed declared dependency or plugin
+        resolution. Keep SHA-256 checksums and trusted-key scope minimal, reject wildcard trust
+        expansion, and require the dependency-review and Snyk Open Source checks to pass.
     - path: ".coderabbit.yaml"
       instructions: >-
         Block changes that disable automatic or incremental review, request-changes behavior,
