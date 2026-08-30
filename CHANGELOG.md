@@ -5,11 +5,18 @@ here before a version tag is created.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-30
+
+### Changed
+- First Maven Central publication moves to 1.1.2 with automatic publication after the protected
+  workflow validates the signed bundle. The immutable 1.1.1 deployment validated successfully
+  but remained pending under its user-managed publication policy.
+
 ## [1.1.1] - 2026-08-30
 
 ### Changed
-- First Maven Central publication moves to 1.1.1 after the immutable 1.1.0 workflow produced its
-  attested GitHub release before the Central publishing flag was enabled.
+- Prepared Maven Central publication after the immutable 1.1.0 workflow produced its attested
+  GitHub release before the Central publishing flag was enabled.
 
 ## [1.1.0] - 2026-08-28
 
@@ -70,7 +77,8 @@ here before a version tag is created.
   events, bounded batching, retry, and blocking Java lifecycle methods.
 - Added Kover gates at 90% lines and 85% methods.
 
-[Unreleased]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/alitycs/alitycs-sdk-jvm/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/alitycs/alitycs-sdk-jvm/releases/tag/v1.0.0

@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "com.alitycs"
-version = "1.1.1"
+version = "1.1.2"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_11
