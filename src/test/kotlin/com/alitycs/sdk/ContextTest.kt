@@ -8,7 +8,7 @@ class ContextTest {
     @Test
     fun `collectContext returns correct SDK info`() {
         val ctx = collectContext()
-        assertEquals("1.1.1", ctx.sdkVersion)
+        assertEquals("1.1.2", ctx.sdkVersion)
         assertEquals("kotlin", ctx.sdkLanguage)
     }
 
