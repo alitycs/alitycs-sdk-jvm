@@ -7,11 +7,11 @@ Official open-source Kotlin-first SDK for sending product-analytics events to
 [Alitycs](https://alitycs.com) from JVM 11+ applications. It uses `java.net.http.HttpClient`,
 Kotlin coroutines, and `kotlinx.serialization`.
 
-Current version: `1.1.0`.
+Current version: `1.1.1`.
 
 ## Installation
 
-The Maven coordinates are `com.alitycs:alitycs-sdk-jvm:1.1.0`. Maven Central publication is enabled
+The Maven coordinates are `com.alitycs:alitycs-sdk-jvm:1.1.1`. Maven Central publication is enabled
 only after the Alitycs namespace and protected signing credentials are configured. Until the first
 Central deployment is published, use the local repository:
 
@@ -25,7 +25,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.alitycs:alitycs-sdk-jvm:1.1.0")
+    implementation("com.alitycs:alitycs-sdk-jvm:1.1.1")
 }
 ```
 

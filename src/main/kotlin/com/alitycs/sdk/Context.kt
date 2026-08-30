@@ -3,7 +3,7 @@ package com.alitycs.sdk
 import java.util.Locale
 import java.util.TimeZone
 
-private const val SDK_VERSION = "1.1.0"
+private const val SDK_VERSION = "1.1.1"
 
 fun collectContext(): EventContext {
     return EventContext(
