@@ -76,7 +76,7 @@ class SdkIntegrationTest {
         assertEquals("submit", props["button"]!!.jsonPrimitive.content)
 
         val ctx = event["context"]!!.jsonObject
-        assertEquals("1.1.0", ctx["sdkVersion"]!!.jsonPrimitive.content)
+        assertEquals("1.1.1", ctx["sdkVersion"]!!.jsonPrimitive.content)
         assertEquals("kotlin", ctx["sdkLanguage"]!!.jsonPrimitive.content)
     }
 
